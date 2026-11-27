@@ -27,7 +27,7 @@ uv run pytest -q               # warnings are errors (filterwarnings = ["error"]
 uv run python scripts/execute_notebooks.py   # when the library or a notebook changed
 ```
 
-CI runs the same checks on Python 3.10 and 3.12, a job with only the required dependencies (the tests of the optional extras must skip, not fail), and the notebooks. All of it must pass before a PR is merged.
+CI runs the same checks on Python 3.10 and 3.12, a job with only the required dependencies (the tests of the optional extras must skip, not fail), and the notebooks (with `--smoke`, which caps the iterations of the slow ones: CI checks that they run, the full run above is yours). All of it must pass before a PR is merged.
 
 ## Code
 

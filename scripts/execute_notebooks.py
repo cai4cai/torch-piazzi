@@ -46,6 +46,8 @@ def main(argv: list[str]) -> int:
     os.environ["PYTHONWARNINGS"] = "default"  # inherited by the kernel
     if "--smoke" in argv:
         os.environ["PIAZZI_NOTEBOOK_SMOKE"] = "1"
+    else:  # a value left in the shell must not cap a full run
+        os.environ.pop("PIAZZI_NOTEBOOK_SMOKE", None)
     paths = [Path(a) for a in argv if a != "--smoke"] or sorted((ROOT / "notebooks").glob("*.ipynb"))
     failed = False
     for path in paths:
