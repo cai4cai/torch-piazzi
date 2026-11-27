@@ -2987,7 +2987,7 @@ notebooks = [
 
 [package.metadata]
 requires-dist = [
-    { name = "scipy", marker = "extra == 'scipy'", specifier = ">=1.10" },
+    { name = "scipy", marker = "extra == 'scipy'", specifier = ">=1.11" },
     { name = "torch", specifier = ">=2.1" },
     { name = "torchsparsegradutils", marker = "extra == 'sparse'", specifier = ">=0.2.7" },
 ]
@@ -2997,7 +2997,7 @@ provides-extras = ["scipy", "sparse"]
 dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = "==0.17.6" },
-    { name = "scipy", specifier = ">=1.10" },
+    { name = "scipy", specifier = ">=1.11" },
     { name = "torchsparsegradutils", specifier = ">=0.2.7" },
 ]
 notebooks = [
@@ -3005,7 +3005,7 @@ notebooks = [
     { name = "matplotlib", specifier = ">=3.7" },
     { name = "nbclient", specifier = ">=0.10" },
     { name = "numpy", specifier = ">=1.24" },
-    { name = "scipy", specifier = ">=1.10" },
+    { name = "scipy", specifier = ">=1.11" },
     { name = "torchsparsegradutils", specifier = ">=0.2.7" },
 ]
 

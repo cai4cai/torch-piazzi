@@ -23,6 +23,18 @@ jobs:
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync pytest -q
 
+  # Only the required dependencies: the tests of the optional extras (SciPy, sparse CG) must skip.
+  test-minimal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv venv && uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: uv pip install -e . pytest numpy
+      - run: uv run --no-sync pytest -q
+
   notebooks:
     runs-on: ubuntu-latest
     steps:
@@ -32,5 +44,10 @@ jobs:
           python-version: "3.12"
       - run: uv venv && uv pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: uv pip install -e . --group notebooks
+      # The bundle adjustment data, downloaded once rather than from its host on every run.
+      - uses: actions/cache@v4
+        with:
+          path: notebooks/problem-49-7776-pre.txt.bz2
+          key: bal-ladybug-49-7776
       # Fails on any error, warning or other stderr output in a cell.
       - run: uv run --no-sync python scripts/execute_notebooks.py

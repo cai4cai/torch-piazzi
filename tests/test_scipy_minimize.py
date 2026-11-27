@@ -169,3 +169,70 @@ def test_scipy_hessp_autodiff_affine_objective():
         options={"maxiter": 3},
     )
     assert res.n_iter <= 3
+
+
+# --- Regression tests from the code review of the SciPy wrappers ----------------------------
+
+
+@needs_scipy
+@pytest.mark.parametrize("method", ["Nelder-Mead", "Powell", "COBYLA"])
+def test_scipy_gradient_free_methods_get_no_gradient(method, x0):
+    calls = []
+
+    def fun(x):
+        calls.append(x.requires_grad)
+        return rosenbrock(x)
+
+    res = pzs.minimize(fun, x0, method=method)  # SciPy would warn about an unused gradient
+    assert res.n_fun_grad == 0 and res.n_fun in (len(calls), len(calls) - 1)  # final re-evaluation not counted
+    assert not any(calls)
+
+
+@needs_scipy
+@pytest.mark.parametrize(
+    ("method", "kind"), [("trust-exact", "hess"), ("Newton-CG", "hessp"), ("trust-krylov", "hessp")]
+)
+def test_scipy_counts_hessian_evaluations(method, kind, x0):
+    calls = []
+
+    def hess(x):
+        calls.append(None)
+        return torch.autograd.functional.hessian(rosenbrock, x)
+
+    def hessp(x, p):
+        return hess(x) @ p
+
+    res = pzs.minimize(rosenbrock, x0, method=method, **{kind: hess if kind == "hess" else hessp})
+    assert res.n_system == len(calls) > 0
+    ref = pzs.minimize(rosenbrock, x0, method=method, **{kind: "autodiff"})
+    assert ref.n_system == res.n_system  # the same path, so the same count with autodiff
+
+
+@needs_scipy
+@pytest.mark.parametrize("jac", ["2-point", "3-point"])
+def test_scipy_finite_differences_are_value_only_calls(jac, x0):
+    calls = []
+
+    def fun(x):
+        calls.append(None)
+        return rosenbrock(x)
+
+    res = pzs.minimize(fun, x0, method="BFGS", jac=jac)
+    assert res.n_fun_grad == 0
+    assert res.n_fun in (len(calls), len(calls) - 1)  # a final re-evaluation is not counted
+
+
+@needs_scipy
+def test_scipy_callback_gets_iteration_info_and_can_stop(x0):
+    seen = []
+
+    def callback(info):
+        seen.append(info)
+        return info.iteration == 4
+
+    res = pzs.minimize(lambda x: (rosenbrock(x), {"x0": x[0] * 1}), x0, method="BFGS", has_aux=True, callback=callback)
+    assert len(seen) == 5 and res.n_iter == 5 and not res.converged
+    assert all(isinstance(info, piazzi.IterationInfo) for info in seen)
+    assert seen[0].fun_start.item() == pytest.approx(rosenbrock(x0).item())
+    assert seen[-1].aux is not None and torch.equal(seen[-1].aux["x0"], seen[-1].x[0])
+    assert torch.equal(seen[-1].x, res.x)

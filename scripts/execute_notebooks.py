@@ -28,6 +28,8 @@ def problems_in(path: Path) -> list[str]:
         client.execute()
     except CellExecutionError as err:
         return [f"error: {err}"]
+    except Exception as err:  # a cell timeout, a dead kernel (out of memory), ...: report it, go on
+        return [f"error: {type(err).__name__}: {err}"]
     problems = []
     for i, cell in enumerate(nb.cells):
         for out in cell.get("outputs", []):
