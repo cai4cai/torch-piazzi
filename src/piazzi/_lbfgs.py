@@ -42,8 +42,13 @@ def lbfgs_armijo(
 
     Curvature pairs with ``s.y <= 0`` are skipped (Armijo does not guarantee positive
     curvature). If no decrease is found the memory is reset and the iterate does not
-    move; two such failures in a row, or a step below ``step_tol`` (max-norm), stop the
-    run: near the optimum the line search otherwise keeps failing on float32 noise. A trial
+    move; the run then retries once with steepest descent. It stops after two failures in
+    a row, after one failure of a steepest-descent step (a retry would repeat it exactly),
+    or once a step is below ``step_tol`` (max-norm). A failure counts as convergence when
+    the loss did not measurably go up (by more than ``8 * eps * |loss|`` in its dtype) and
+    either the first trial step was already below ``step_tol`` or its predicted decrease
+    was below that rounding noise: near the optimum of a float32 objective, the line search
+    otherwise keeps failing on noise. A trial
     point with a non-finite value never passes the line search, and a non-finite value at
     ``x0`` stops the run at once.
 
@@ -107,6 +112,8 @@ def lbfgs_armijo(
     def eval_value(xv):
         with torch.no_grad():
             loss = value_fun(xv.reshape(shape))
+        if isinstance(loss, tuple):  # value_fun=fun with has_aux: drop the aux
+            loss = loss[0]
         counts["f"] += 1
         return loss.detach()
 
@@ -134,8 +141,11 @@ def lbfgs_armijo(
     S: list[torch.Tensor] = []
     Y: list[torch.Tensor] = []
     fails = 0
+    eps = torch.finfo(g.dtype).eps
     for it in range(max_iter):
         f_val = f.item()
+        if g.abs().max().item() == 0:  # stationary: nothing to do, and no direction to search
+            return result(it, True, "gradient is zero")
         # Two-loop recursion.
         qv = -g
         alphas = []
@@ -151,12 +161,16 @@ def lbfgs_armijo(
             qv = qv + s_ * (a - b)
         d = qv
         gtd = torch.dot(g, d).item()
-        if gtd > -1e-12:  # not a descent direction: restart from steepest descent
+        # Not a descent direction (relative to the scale of g and d, so that objectives with
+        # tiny gradients still count as descending): restart from steepest descent.
+        if not math.isfinite(gtd) or gtd >= -eps * (torch.linalg.vector_norm(g) * torch.linalg.vector_norm(d)).item():
             S.clear()
             Y.clear()
             d, gtd = -g, -torch.dot(g, g).item()
         t = lr if S else lr * min(1.0, 1.0 / max(g.abs().sum().item(), 1e-12))
         t = min(t, max_step / max(d.abs().max().item(), 1e-12))
+        used_memory = bool(S)
+        pred, step0 = -t * gtd, t * d.abs().max().item()  # predicted decrease and size of the first trial
         x_new = retract(manifold, x, t * d)
         f_new, aux_new, pending = eval_trial(x_new)
         n_bt = 0
@@ -181,8 +195,15 @@ def lbfgs_armijo(
             stop = callback is not None and callback(
                 IterationInfo(it, x.reshape(shape), f, f, aux, False, counts["fg"], counts["f"])
             )
-            if fails >= 2:
-                return result(it + 1, False, "line search failed twice in a row")
+            if fails >= 2 or not used_memory:
+                noise = 8 * torch.finfo(f.dtype).eps * abs(f_val)
+                if math.isfinite(f_new.item()) and f_new.item() <= f_val + noise:
+                    if step0 < step_tol:
+                        return result(it + 1, True, "step below step_tol")
+                    if pred <= noise:
+                        return result(it + 1, True, "predicted decrease below rounding noise")
+                message = "line search failed twice in a row" if fails >= 2 else "line search failed"
+                return result(it + 1, False, message)
             if stop:
                 return result(it + 1, False, "stopped by callback")
             continue
@@ -192,8 +213,16 @@ def lbfgs_armijo(
         else:
             g_new = accept(pending)
             pending = None
+        if not torch.isfinite(g_new).all():  # the value decreased, but the gradient is unusable
+            f_start = f
+            x, f, aux = x_new, f_new, aux_new
+            if callback is not None:
+                callback(IterationInfo(it, x.reshape(shape), f, f_start, aux, True, counts["fg"], counts["f"]))
+            return result(it + 1, False, "gradient is not finite")
         s_vec, y_vec = t * d, g_new - g  # tangent step (equals x_new - x without a manifold)
-        if torch.dot(s_vec, y_vec).item() > 1e-10:
+        # Keep the pair only with positive curvature, relative to the scale of s and y.
+        sy = torch.dot(s_vec, y_vec).item()
+        if sy > eps * (torch.linalg.vector_norm(s_vec) * torch.linalg.vector_norm(y_vec)).item():
             S.append(s_vec)
             Y.append(y_vec)
             if len(S) > history_size:
@@ -205,7 +234,9 @@ def lbfgs_armijo(
         stop = callback is not None and callback(
             IterationInfo(it, x.reshape(shape), f, f_start, aux, True, counts["fg"], counts["f"])
         )
-        if step < step_tol:
+        # An unscaled steepest-descent step (no curvature pairs yet) says nothing about
+        # convergence: with a tiny gradient it is tiny too.
+        if used_memory and step < step_tol:
             return result(it + 1, True, "step below step_tol")
         if stop:
             return result(it + 1, False, "stopped by callback")

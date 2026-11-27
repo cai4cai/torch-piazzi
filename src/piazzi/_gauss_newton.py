@@ -62,7 +62,13 @@ def gauss_newton(
     ``scipy.optimize.least_squares``).
 
     Both stop once a step is below ``step_tol`` (max-norm), or when the gradient is exactly
-    zero (a stationary point, where ``H`` may be singular). A trial point with a non-finite
+    zero (a stationary point, where ``H`` may be singular). They also stop, as converged,
+    when a step fails but the model predicted a decrease below the rounding noise of the
+    loss, ``8 * eps * |loss|`` in the loss's dtype (for Levenberg-Marquardt, the prediction
+    of the first trial from the current point): no step can then show measurable progress.
+    This is what ends a float32 objective at its minimiser, where rounding noise in the
+    gradient keeps steps above ``step_tol``; it plays the role of Ceres Solver's
+    ``function_tolerance``. A trial point with a non-finite
     value is never accepted, and a non-finite value at ``x0`` stops the run at once.
 
     With a ``manifold`` (see :class:`piazzi.Manifold`), ``g`` and ``H`` are in its tangent
@@ -99,22 +105,38 @@ def gauss_newton(
         else:
             (loss, g, H), aux = out, None
         counts["sys"] += 1
-        return loss.detach(), detach_tree(aux), g.detach().reshape(-1), H.detach()
+        # Copies: a system may write into the same output buffers at every call, and the solver
+        # keeps g and H of the current point while it evaluates trial points.
+        return loss.detach(), detach_tree(aux), g.detach().reshape(-1).clone(), H.detach().clone()
 
     def eval_value(xv):
         with torch.no_grad():
             loss = value_fun(xv.reshape(shape)) if value_fun is not None else system(xv.reshape(shape))[0]
+        if isinstance(loss, tuple):  # a value_fun that also returns aux
+            loss = loss[0]
         counts["f"] += 1
         return loss.detach()
+
+    def all_finite(t):
+        values = t if not is_sparse(t) else (t.coalesce().values() if t.layout == torch.sparse_coo else t.values())
+        return bool(torch.isfinite(values).all())
 
     def host(t):
         return transfer(t, solve_device, solve_dtype)
 
+    def noise(f_val):
+        """Rounding noise of a loss value ``f_val`` in the objective's dtype."""
+        return 8 * torch.finfo(f.dtype).eps * abs(f_val)
+
     def at_noise_floor(f_new, f_val, step):
         # A step below step_tol whose value went up by no more than rounding noise: we are at a
         # minimiser to working precision, so the step counts as accepted (and converged).
-        noise = 8 * torch.finfo(f.dtype).eps * abs(f_val)
-        return step < step_tol and f_new <= f_val + noise
+        return step < step_tol and f_new <= f_val + noise(f_val)
+
+    def below_noise(pred, f_new, f_val):
+        # The model promises less than rounding noise and the value did not measurably go up:
+        # a failed step here means we are at a minimiser to working precision.
+        return pred <= noise(f_val) and math.isfinite(f_new) and f_new <= f_val + noise(f_val)
 
     def armijo_ok(fn, f_val, t, gtd, d):
         # A non-finite trial value (NaN, or -inf, which would pass `<=`) is never accepted.
@@ -168,11 +190,16 @@ def gauss_newton(
     nu, rejections, have_sys = 2.0, 0, True
     for it in range(max_iter):
         f_val, f_start = f.item(), f
+        if not (all_finite(gc) and all_finite(Hc)):
+            return result(it, False, "gradient or curvature is not finite")
         if gc.abs().max().item() == 0:  # stationary, and H may be singular (e.g. J = 0)
             return result(it, True, "gradient is zero")
         if method == "gn":
             d = solve(Hc, gc, gn_ridge * (diagonal(Hc).mean().item() if damping == "identity" else 1.0))
             gtd = torch.dot(gc, d).item()
+            if not gtd < 0:  # an indefinite H or an inexact custom solver: fall back to steepest descent
+                d = -gc * min(1.0, max_step / gc.abs().max().item())
+                gtd = torch.dot(gc, d).item()
             t = 1.0
             dx = transfer(d, x.device, x.dtype)
             x_new = retract(manifold, x, dx)
@@ -186,6 +213,8 @@ def gauss_newton(
                 n_bt += 1
             if not armijo_ok(f_new.item(), f_val, t, gtd, d):
                 notify(it, f_start, False)
+                if below_noise(-gtd, f_new.item(), f_val):
+                    return result(it + 1, True, "predicted decrease below rounding noise")
                 return result(it + 1, False, "line search failed")
             if g_new is None:
                 f_new, aux_new, g_new, H_new = eval_sys(x_new)
@@ -201,6 +230,10 @@ def gauss_newton(
         # Levenberg-Marquardt.
         d = solve(Hc, gc, lam)
         pred = -(torch.dot(gc, d) + 0.5 * torch.dot(d, matvec(Hc, d))).item()
+        if rejections == 0:
+            # The prediction of the first trial from this point: rejections raise lam and shrink
+            # later predictions, which must not pass for convergence far from a minimiser.
+            pred_first = pred
         x_new = retract(manifold, x, transfer(d, x.device, x.dtype))
         if rejections == 0:  # after an accepted step the trial is usually accepted too
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
@@ -232,6 +265,8 @@ def gauss_newton(
             nu *= 2.0
             rejections += 1
             stop = notify(it, f_start, False)
+            if below_noise(pred_first, fn, f_val):
+                return result(it + 1, True, "predicted decrease below rounding noise")
             if rejections >= max_rejections:
                 return result(it + 1, False, "too many rejected steps in a row")
             if stop:

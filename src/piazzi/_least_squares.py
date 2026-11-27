@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import torch
+import torch.utils._pytree as pytree
 
 from ._common import OptimizeResult, quiet_jvp_warnings
 from ._gauss_newton import gauss_newton
@@ -61,13 +62,24 @@ def least_squares_system(
 
     def system(x):
         shape = x.shape
+        # jacfwd passes only tensors through has_aux, so aux is split into its tensor leaves
+        # (returned through jacfwd) and the rest (kept here), and put back together below.
+        static = {}
 
         def flat(xf):
             out = residual_fun(xf.reshape(shape))
             if has_aux:
                 r, aux = out
-                return r.reshape(-1), (r.reshape(-1), aux)
+                leaves, static["spec"] = pytree.tree_flatten(aux)
+                static["leaves"] = leaves
+                tensors = [leaf for leaf in leaves if isinstance(leaf, torch.Tensor)]
+                return r.reshape(-1), (r.reshape(-1), tensors)
             return out.reshape(-1), (out.reshape(-1),)
+
+        def rebuild(tensors):
+            it = iter(tensors)
+            leaves = [next(it) if isinstance(leaf, torch.Tensor) else leaf for leaf in static["leaves"]]
+            return pytree.tree_unflatten(leaves, static["spec"])
 
         with quiet_jvp_warnings():
             if manifold is None:
@@ -79,7 +91,7 @@ def least_squares_system(
                     J = extra[0].new_zeros(extra[0].numel(), 0)
                 else:
                     J, extra = torch.func.jacfwd(lambda d: flat(manifold.plus(x, d)), has_aux=True)(delta)
-        r, aux = extra[0], (extra[1] if has_aux else None)
+        r, aux = extra[0], (rebuild(extra[1]) if has_aux else None)
         if robust:
             z = (r / f_scale) ** 2
             rho, d1, d2 = rho_and_derivatives(z, loss)

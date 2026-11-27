@@ -148,7 +148,7 @@ def test_step_tol():
 
 def test_non_finite_values():
     res = piazzi.minimize(lambda x: x.sum() * math.nan, torch.ones(2, dtype=F64), method=torch.optim.Adam)
-    assert not res.converged and res.n_iter == 0 and res.message == "non-finite value at x0"
+    assert not res.converged and res.n_iter == 0 and res.message == "objective is not finite at x0"
 
     def fun(x):  # NaN beyond x = 1, minimiser at x = 3
         return ((x - 3) ** 2).sum() + torch.where(x > 1, math.nan, 0.0).sum()

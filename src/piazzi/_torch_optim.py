@@ -87,7 +87,7 @@ def torch_optimizer(
 
     f, g, aux = current()
     if not math.isfinite(f.item()):
-        return result(0, False, "non-finite value at x0")
+        return result(0, False, "objective is not finite at x0")
     group = opt.param_groups[0]
     if lbfgs and g.abs().max().item() <= group["tolerance_grad"]:
         return result(0, True, "gradient below tolerance_grad")
