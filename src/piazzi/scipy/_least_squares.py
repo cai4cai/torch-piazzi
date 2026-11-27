@@ -10,20 +10,9 @@ import torch
 
 from .._common import OptimizeResult, check_x0, quiet_jvp_warnings
 from ..losses import Loss, check_loss, rho_and_derivatives
+from ._convert import n2t, t2n
 
-__all__ = ["least_squares", "n2t", "t2n"]
-
-
-def t2n(x: torch.Tensor) -> np.ndarray:
-    """Detached float64 NumPy copy of a tensor from any device."""
-    # Move first, then cast: casting on the source device fails where it lacks float64 (MPS).
-    return x.detach().cpu().to(torch.float64).numpy()
-
-
-def n2t(a, like: torch.Tensor) -> torch.Tensor:
-    """Copy of an array-like as a tensor with the dtype and device of ``like``."""
-    # Cast on the CPU, then move, for the same reason as in t2n.
-    return torch.from_numpy(np.array(a, dtype=np.float64)).to(like.dtype).to(like.device)
+__all__ = ["least_squares"]
 
 
 def _to_scipy(v):

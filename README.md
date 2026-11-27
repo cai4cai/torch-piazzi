@@ -11,6 +11,7 @@
 | Function | Needs | Notes |
 |---|---|---|
 | `lbfgs_armijo(fun, x0)` | value + gradient (autograd) | L-BFGS with Armijo backtracking. It usually costs one evaluation per iteration, and the line search uses value-only evaluations. |
+| `minimize(fun, x0, method="lbfgs_armijo", options=...)` | value + gradient (autograd) | Like `scipy.optimize.minimize`: picks a scalar minimiser by name (`piazzi.MINIMIZE_METHODS`; currently only `lbfgs_armijo`) and passes it `options`. |
 | `gauss_newton(system, x0, method="gn")` | `(loss, g, H)` | Gauss-Newton with Armijo backtracking. |
 | `gauss_newton(system, x0, method="lm")` / `levenberg_marquardt` | `(loss, g, H)` | Levenberg-Marquardt with Nielsen's damping update. |
 | `least_squares(fun, x0, loss=..., f_scale=...)` | residuals `r(x)` | Like `scipy.optimize.least_squares`: Levenberg-Marquardt (or `method="gn"`) on the normal equations from `least_squares_system`, with an optional robust loss. |
@@ -31,6 +32,7 @@ The normal equations are solved in float64 on the CPU by default, so the objecti
 | Function | Backend | Notes |
 |---|---|---|
 | `piazzi.scipy.least_squares(fun, x0, loss=..., f_scale=...)` | [`scipy.optimize.least_squares`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html) | `fun` and the result use tensors. The Jacobian comes from forward-mode autodiff by default, as in `piazzi.least_squares`; `jac` can also be a PyTorch callable or SciPy's `"2-point"` / `"3-point"`. A PyTorch `loss` callable is supported, with derivatives from autograd. Other keyword arguments (`method`, `bounds`, `ftol`, ...) go to SciPy, and `result.raw` holds SciPy's own result. |
+| `piazzi.scipy.minimize(fun, x0, method=..., options=...)` | [`scipy.optimize.minimize`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html) | Same calling convention as `piazzi.minimize`, with any SciPy method. By default each evaluation returns the value and its autograd gradient together. `hess="autodiff"` / `hessp="autodiff"` give exact Hessians or Hessian-vector products for Newton-CG and the trust-region methods. `bounds` may hold tensors, and other keyword arguments (`tol`, `constraints`, ...) go to SciPy. |
 
 ```bash
 pip install "piazzi[scipy] @ git+https://github.com/cai4cai/torch-piazzi"
@@ -40,6 +42,7 @@ pip install "piazzi[scipy] @ git+https://github.com/cai4cai/torch-piazzi"
 import piazzi.scipy
 
 res = piazzi.scipy.least_squares(fun, x0, loss="cauchy", f_scale=0.1)  # same fun and x0 as piazzi.least_squares
+res = piazzi.scipy.minimize(cost, x0, method="L-BFGS-B")  # same cost and x0 as piazzi.minimize
 ```
 
 ## Example
