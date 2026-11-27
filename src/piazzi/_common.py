@@ -104,8 +104,9 @@ def transfer(t: torch.Tensor, device, dtype: torch.dtype) -> torch.Tensor:
 # Tuned on a float32 benchmark (Rosenbrock from random starts, SE(3) registration with data
 # perturbed by an ulp, robust and far-off exponential fits, scaled objectives, runs capped by
 # max_iter; see #19 and #25): there, it let every run that reached a minimiser report
-# convergence, and no run that had not. It is a heuristic, not a guarantee.
-RESOLUTION_ULPS = 32
+# convergence, and no run that had not. 32 left an L-BFGS registration on 1 in 200 perturbed
+# data sets one step short (45 ulps), so 64 leaves a margin. A heuristic, not a guarantee.
+RESOLUTION_ULPS = 64
 
 
 def unmoved(manifold, x: torch.Tensor, x_new: torch.Tensor) -> bool:

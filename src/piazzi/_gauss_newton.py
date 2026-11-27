@@ -71,7 +71,7 @@ def gauss_newton(
     ``function_tolerance``. Near a zero residual the loss's rounding noise is absolute and
     that test cannot see it, so a failed step also counts as converged when the Gauss-Newton
     step, which estimates the distance to the minimiser, leaves ``x`` unmoved: every entry
-    within 32 units in the last place of its scale (``|x|``, or the manifold's
+    within 64 units in the last place of its scale (``|x|``, or the manifold's
     :meth:`~piazzi.Manifold.entry_scale`). The loss cannot change measurably along
     such a step. For Levenberg-Marquardt, whose first trial from a point is damped, the
     undamped Gauss-Newton step is checked as well (one extra linear solve), and a trial with

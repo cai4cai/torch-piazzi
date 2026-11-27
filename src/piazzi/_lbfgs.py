@@ -54,9 +54,10 @@ def lbfgs_armijo(
     move; the run then retries once with steepest descent. It stops after two failures in
     a row, after one failure of a steepest-descent step (a retry would repeat it exactly),
     or once a step is below ``step_tol`` (max-norm). The stop counts as convergence when the
-    first failed search (from the L-BFGS memory, before the steepest-descent retry) showed a
+    last failed search from the L-BFGS memory (since the last step from memory that was
+    accepted; steepest-descent steps in between do not count) showed a
     minimiser to working precision: its step, which estimates the distance to the minimiser,
-    left ``x`` unmoved (every entry within 32 units in the last place of its scale, ``|x|`` or
+    left ``x`` unmoved (every entry within 64 units in the last place of its scale, ``|x|`` or
     the manifold's :meth:`~piazzi.Manifold.entry_scale`, at a finite value), or the loss
     did not measurably go up (by more than ``8 * eps * |loss|`` in its dtype) while that step
     was below ``step_tol`` or predicted a decrease below that rounding noise. Near the optimum
@@ -210,18 +211,21 @@ def lbfgs_armijo(
             stop = callback is not None and callback(
                 IterationInfo(it, x.reshape(shape), f, f, aux, False, counts["fg"], counts["f"])
             )
-            # Whether this failure shows a minimiser to working precision. The verdict of the
-            # first attempt (from the L-BFGS memory) is kept for the steepest-descent retry,
-            # whose unscaled step and prediction say nothing about the distance to the minimiser.
+            # Whether this failure shows a minimiser to working precision. A failure from the
+            # L-BFGS memory gives the verdict; steepest-descent attempts, whose unscaled step and
+            # prediction say nothing about the distance to the minimiser, keep the verdict of the
+            # last such failure, even across a steepest-descent step that succeeded on noise.
             noise = 8 * torch.finfo(f.dtype).eps * abs(f_val)
             flat = math.isfinite(f_new.item()) and f_new.item() <= f_val + noise
-            if stalled is None:
-                if first_unmoved:
-                    stalled = "step below the resolution of x"
-                elif flat and step0 < step_tol:
-                    stalled = "step below step_tol"
-                elif flat and pred <= noise:
-                    stalled = "predicted decrease below rounding noise"
+            verdict = None
+            if first_unmoved:
+                verdict = "step below the resolution of x"
+            elif flat and step0 < step_tol:
+                verdict = "step below step_tol"
+            elif flat and pred <= noise:
+                verdict = "predicted decrease below rounding noise"
+            if used_memory or stalled is None:
+                stalled = verdict
             if fails >= 2 or not used_memory:
                 if stalled is not None:
                     return result(it + 1, True, stalled)
@@ -230,7 +234,9 @@ def lbfgs_armijo(
             if stop:
                 return result(it + 1, False, "stopped by callback")
             continue
-        fails, stalled = 0, None
+        fails = 0
+        if used_memory:  # real progress from the memory: an earlier verdict no longer holds
+            stalled = None
         if pending is None:  # accepted on a value_fun evaluation
             f_new, aux_new, g_new = eval_full(x_new)
         else:
