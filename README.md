@@ -13,7 +13,14 @@
 | `lbfgs_armijo(fun, x0)` | value + gradient (autograd) | L-BFGS with Armijo backtracking. It usually costs one evaluation per iteration, and the line search uses value-only evaluations. |
 | `gauss_newton(system, x0, method="gn")` | `(loss, g, H)` | Gauss-Newton with Armijo backtracking. |
 | `gauss_newton(system, x0, method="lm")` / `levenberg_marquardt` | `(loss, g, H)` | Levenberg-Marquardt with Nielsen's damping update. |
-| `least_squares_system(residual_fun)` | residuals `r(x)` | Builds `(0.5‖r‖², Jᵀr, JᵀJ)` with forward-mode autodiff. |
+| `least_squares(fun, x0, loss=..., f_scale=...)` | residuals `r(x)` | Like `scipy.optimize.least_squares`: Levenberg-Marquardt (or `method="gn"`) on the normal equations from `least_squares_system`, with an optional robust loss. |
+| `least_squares_system(residual_fun, loss=..., f_scale=...)` | residuals `r(x)` | Builds `(F, g, H)` with forward-mode autodiff: `(0.5‖r‖², Jᵀr, JᵀJ)`, or the robust equivalents. |
+
+### Robust losses
+
+As in SciPy, `loss` is `"linear"` (the default), `"huber"`, `"soft_l1"`, `"cauchy"`, `"arctan"`, or any elementwise PyTorch function `rho(z)`, whose derivatives come from autograd. The cost is `F = 0.5 * Σ C² ρ(rᵢ² / C²)` with `C = f_scale`. `piazzi.robust_cost(r, loss, f_scale)` evaluates it differentiably, for use with `lbfgs_armijo`.
+
+The gradient is `Jᵀ(ρ′ ⊙ r)`. By default the curvature model is `Jᵀ diag(ρ′) J` (`curvature="irls"`), the iteratively reweighted least-squares model that Ceres Solver also uses for these losses. `curvature="scipy"` uses SciPy's `max(ρ′ + 2ρ″z, ε)` weights instead. It is more accurate for inliers but nearly singular when most residuals start out as outliers. Both models converge to the same minimiser.
 
 The normal equations are solved in float64 on the CPU by default, so the objective itself can run in float32 on a GPU or MPS device. Every solver returns an `OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. You can pass `callback(info)` to record the iterates or to stop early by returning `True`.
 
@@ -26,9 +33,12 @@ import piazzi
 t = torch.linspace(0, 4, 40)
 y = 2.5 * torch.exp(-1.3 * t)
 
-system = piazzi.least_squares_system(lambda th: th[0] * torch.exp(-th[1] * t) - y)
-res = piazzi.levenberg_marquardt(system, torch.tensor([1.0, 0.5]))
-print(res.x, res.message)
+y[::10] += 2.0  # outliers
+
+res = piazzi.least_squares(
+    lambda th: th[0] * torch.exp(-th[1] * t) - y, torch.tensor([1.0, 0.5]), loss="cauchy", f_scale=0.1
+)
+print(res.x, res.message)  # tensor([2.5026, 1.3005]) step below step_tol; loss="linear" gives [3.1057, 1.2745]
 ```
 
 ## Notebooks
@@ -37,7 +47,7 @@ The notebooks in [`notebooks/`](notebooks) run locally or in Google Colab. On Co
 
 | Notebook | Description | |
 |---|---|---|
-| [Robust nonlinear regression](notebooks/robust_regression.ipynb) | The [SciPy Cookbook robust regression example](https://scipy-cookbook.readthedocs.io/items/robust_regression.html) with Levenberg-Marquardt and L-BFGS: robust losses (Huber, soft L1, Cauchy, arctan) through IRLS normal equations, checked against `scipy.optimize.least_squares`. | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/robust_regression.ipynb) |
+| [Robust nonlinear regression](notebooks/robust_regression.ipynb) | The [SciPy Cookbook robust regression example](https://scipy-cookbook.readthedocs.io/items/robust_regression.html) with `piazzi.least_squares` and L-BFGS: robust losses (Huber, soft L1, Cauchy, arctan, custom), checked against `scipy.optimize.least_squares`. | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/robust_regression.ipynb) |
 
 To run them locally:
 

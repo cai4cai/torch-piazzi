@@ -20,8 +20,8 @@ classifiers = [
 Repository = "https://github.com/cai4cai/torch-piazzi"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
-notebooks = ["jupyterlab>=4", "matplotlib>=3.7", "numpy>=1.24", "scipy>=1.10"]
+dev = ["pytest>=8", "ruff==0.17.6", "scipy>=1.10"]
+notebooks = ["jupyterlab>=4", "matplotlib>=3.7", "nbclient>=0.10", "numpy>=1.24", "scipy>=1.10"]
 
 [build-system]
 requires = ["hatchling>=1.26"]
@@ -35,6 +35,7 @@ packages = ["src/piazzi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = ["error"]
 
 [tool.ruff]
 line-length = 120

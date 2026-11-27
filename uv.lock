@@ -2956,11 +2956,15 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "ruff" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 notebooks = [
     { name = "jupyterlab" },
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "matplotlib", version = "3.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "nbclient" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -2975,11 +2979,13 @@ requires-dist = [{ name = "torch", specifier = ">=2.1" }]
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8" },
-    { name = "ruff", specifier = ">=0.6" },
+    { name = "ruff", specifier = "==0.17.6" },
+    { name = "scipy", specifier = ">=1.10" },
 ]
 notebooks = [
     { name = "jupyterlab", specifier = ">=4" },
     { name = "matplotlib", specifier = ">=3.7" },
+    { name = "nbclient", specifier = ">=0.10" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "scipy", specifier = ">=1.10" },
 ]
