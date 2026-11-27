@@ -170,7 +170,9 @@ def test_se3_registration(device, dtype, solver):
             T0,
             manifold=manifold,
             # A step_tol the dtype can resolve: float32 cannot move a coordinate near 1 by 1e-10.
-            options={"max_iter": 300, "step_tol": 1e-10 if dtype == torch.float64 else 1e-6},
+            # L-BFGS is slow here (rotation and translation are scaled ~100 apart): ~190 iterations
+            # usually, up to ~550 when float32 rounding differs by an ulp, as across platforms.
+            options={"max_iter": 1000, "step_tol": 1e-10 if dtype == torch.float64 else 1e-6},
         )
     # Near this zero residual, float32 runs reach the pose to float32 precision but may stop on a
     # rejected step rather than report convergence, depending on the platform's rounding
