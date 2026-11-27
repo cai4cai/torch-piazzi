@@ -133,7 +133,9 @@ def lbfgs_armijo(
             S.clear()
             Y.clear()
             fails += 1
-            stop = callback is not None and callback(IterationInfo(it, x.reshape(shape), f, f, aux, False))
+            stop = callback is not None and callback(
+                IterationInfo(it, x.reshape(shape), f, f, aux, False, counts["fg"], counts["f"])
+            )
             if fails >= 2:
                 return result(it + 1, False, "line search failed twice in a row")
             if stop:
@@ -152,7 +154,9 @@ def lbfgs_armijo(
         step = s_vec.abs().max().item()
         f_start = f
         x, f, aux, g = x_new, f_new, aux_new, g_new
-        stop = callback is not None and callback(IterationInfo(it, x.reshape(shape), f, f_start, aux, True))
+        stop = callback is not None and callback(
+            IterationInfo(it, x.reshape(shape), f, f_start, aux, True, counts["fg"], counts["f"])
+        )
         if step < step_tol:
             return result(it + 1, True, "step below step_tol")
         if stop:

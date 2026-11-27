@@ -103,7 +103,8 @@ def torch_optimizer(
             f, aux = f_old, aux_old
             return result(it + 1, False, "non-finite value")
         step = (param.detach() - x_old).abs().max().item()
-        stop = callback is not None and bool(callback(IterationInfo(it, param.detach().clone(), f, f_old, aux, True)))
+        info = IterationInfo(it, param.detach().clone(), f, f_old, aux, True, n_fun_grad=counts["fg"])
+        stop = callback is not None and bool(callback(info))
         if lbfgs:
             # Upstream's tests; a zero step means the directional derivative was above
             # -tolerance_change, and LBFGS stopped without moving.

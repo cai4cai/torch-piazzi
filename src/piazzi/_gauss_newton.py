@@ -112,7 +112,10 @@ def gauss_newton(
         )
 
     def notify(it, f_start, accepted):
-        return callback is not None and bool(callback(IterationInfo(it, x.reshape(shape), f, f_start, aux, accepted)))
+        if callback is None:
+            return False
+        info = IterationInfo(it, x.reshape(shape), f, f_start, aux, accepted, n_fun=counts["f"], n_system=counts["sys"])
+        return bool(callback(info))
 
     f, aux, g, H = eval_sys(x)
     if not torch.isfinite(f):
