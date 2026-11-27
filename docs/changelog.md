@@ -12,3 +12,4 @@ piazzi is pre-alpha and not yet on PyPI. Development so far:
 - Float32 runs that reach a minimiser near a zero residual report convergence (`step below the resolution of x`), judged entry by entry at each point's scale (`Manifold.entry_scale`).
 - Notebooks: robust regression, Rosenbrock, bundle adjustment.
 - This documentation site.
+- `print_progress`, a callback that prints a table of a run's progress.
