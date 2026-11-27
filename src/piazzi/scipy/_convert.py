@@ -9,18 +9,32 @@ __all__ = ["bounds_to_scipy", "iteration_callback", "n2t", "t2n", "to_scipy_arra
 
 
 def t2n(x: torch.Tensor) -> np.ndarray:
-    """Detached float64 NumPy copy of a tensor from any device.
+    """Convert a tensor to a float64 NumPy array, as the SciPy wrappers do.
 
     Always an owned copy: for a CPU float64 tensor ``.numpy()`` alone would alias its storage.
     SciPy's robust-loss scaling is written to work in place (``f *= ...``, ``copy=False``);
     current versions copy first, but a view of PyTorch storage should never depend on that.
+
+    Args:
+        x (Tensor): a tensor on any device, of any dtype and shape.
+
+    Returns:
+        numpy.ndarray: a detached float64 copy, with the shape of ``x``.
     """
     # Move first, then cast: casting on the source device fails where it lacks float64 (MPS).
     return x.detach().cpu().to(torch.float64).numpy().copy()
 
 
 def n2t(a, like: torch.Tensor) -> torch.Tensor:
-    """Copy of an array-like as a tensor with the dtype and device of ``like``."""
+    """Convert an array-like to a tensor, as the SciPy wrappers do.
+
+    Args:
+        a (array_like): a NumPy array, scalar or nested sequence.
+        like (Tensor): the tensor whose dtype and device the result takes.
+
+    Returns:
+        Tensor: a copy of ``a`` with the dtype and device of ``like``.
+    """
     if np.iscomplexobj(a):
         raise TypeError("complex values are not supported (complex-step derivatives cannot pass through PyTorch)")
     # Cast on the CPU, then move, for the same reason as in t2n.

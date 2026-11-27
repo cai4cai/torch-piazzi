@@ -54,6 +54,9 @@ def _arctan(z):
     return torch.arctan(z), 1 / t, -2 * z / t**2
 
 
+#: The built-in robust losses by name: ``"linear"``, ``"huber"``, ``"soft_l1"``, ``"cauchy"`` and
+#: ``"arctan"``, as in :func:`scipy.optimize.least_squares`. Each maps ``z`` to
+#: ``(rho(z), rho'(z), rho''(z))`` in closed form, so the normal equations need no autograd.
 LOSSES: dict[str, Callable] = {
     "linear": _linear,
     "huber": _huber,
@@ -89,10 +92,29 @@ def rho_and_derivatives(z: torch.Tensor, loss: Loss) -> tuple[torch.Tensor, torc
 
 
 def robust_cost(r: torch.Tensor, loss: Loss = "linear", f_scale: float = 1.0) -> torch.Tensor:
-    """``0.5 * sum(f_scale^2 * rho((r / f_scale)^2))``, differentiable with autograd.
+    """Robust least-squares cost ``0.5 * sum(f_scale^2 * rho((r / f_scale)^2))``.
 
-    This is the cost that :func:`piazzi.least_squares` minimises. Use it with
+    This is the cost that :func:`piazzi.least_squares` minimises, written so that autograd
+    can differentiate it. Use it with :func:`piazzi.minimize` or
     :func:`piazzi.lbfgs_armijo` to minimise the same cost without a Jacobian.
+
+    Args:
+        r (Tensor): residuals, of any shape.
+        loss (str or Callable, optional): a name from :data:`piazzi.LOSSES`, or a callable
+            ``rho(z)`` written in PyTorch and applied elementwise. Default: ``"linear"``
+        f_scale (float, optional): soft margin between inlier and outlier residuals, in the
+            units of ``r``. Default: ``1.0``
+
+    Returns:
+        Tensor: the cost, a scalar tensor.
+
+    Example::
+
+        >>> r = torch.tensor([0.1, -0.2, 3.0])
+        >>> piazzi.robust_cost(r)
+        tensor(4.5250)
+        >>> piazzi.robust_cost(r, loss="huber", f_scale=0.5)
+        tensor(1.4000)
     """
     check_loss(loss, f_scale)
     z = (r / f_scale) ** 2

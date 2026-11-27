@@ -16,6 +16,9 @@ import torch
 
 __all__ = ["LinearSolver", "cg_solver", "dense_solver"]
 
+#: Signature of a linear solver for :func:`piazzi.gauss_newton`: ``solver(H, g, damping) -> d``
+#: solves ``(H + diag(damping)) d = -g``, with ``H`` of shape ``(n, n)`` (dense, or sparse COO
+#: or CSR) and ``g``, ``damping`` and ``d`` of shape ``(n,)``.
 LinearSolver = Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]
 
 
@@ -40,7 +43,19 @@ def matvec(H: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
 
 
 def dense_solver(H: torch.Tensor, g: torch.Tensor, damping: torch.Tensor) -> torch.Tensor:
-    """Direct solve with ``torch.linalg.solve`` (a sparse ``H`` is densified)."""
+    """Solve the damped normal equations directly, with :func:`torch.linalg.solve`.
+
+    The default :data:`piazzi.LinearSolver` of :func:`piazzi.gauss_newton` for a dense ``H``.
+    A sparse ``H`` is densified first.
+
+    Args:
+        H (Tensor): curvature model of shape ``(n, n)``, dense or sparse.
+        g (Tensor): gradient of shape ``(n,)``.
+        damping (Tensor): diagonal damping of shape ``(n,)``.
+
+    Returns:
+        Tensor: the step ``d`` of shape ``(n,)`` that solves ``(H + diag(damping)) d = -g``.
+    """
     if is_sparse(H):
         H = H.to_dense()
     return torch.linalg.solve(H + torch.diag(damping), -g)
@@ -51,24 +66,32 @@ def cg_solver(
     max_iter: int = 500,
     preconditioner: str | Callable[[torch.Tensor, torch.Tensor], Callable] | None = "jacobi",
 ) -> LinearSolver:
-    """Preconditioned conjugate gradients from `torchsparsegradutils`_, for large sparse ``H``.
+    """Make a preconditioned conjugate-gradient solver for large sparse normal equations.
 
-    Returns a ``solver(H, g, damping)`` for the ``linear_solver`` argument of
-    :func:`gauss_newton`. ``H`` is only used through its diagonal and matrix-vector
-    products, so it can be any sparse layout ``H @ v`` supports. CG stops at a relative
-    residual of ``tol`` (> 0) or after ``max_iter`` iterations, without a warning: an
-    inexact step is fine for Gauss-Newton and Levenberg-Marquardt, whose line search or gain
-    ratio checks it. If CG breaks down (a numerically singular damped system), the solver
-    returns the preconditioned gradient step ``-M^{-1} g`` instead, which is still a descent
-    direction.
+    The returned :data:`piazzi.LinearSolver` is the default of :func:`piazzi.gauss_newton`
+    for a sparse ``H``. It uses CG from `torchsparsegradutils`_, which needs the optional
+    dependency (``pip install "piazzi[sparse]"``). ``H`` is only used through its diagonal
+    and matrix-vector products, so it can be any sparse layout that ``H @ v`` supports. CG
+    stops at a relative residual of ``tol`` or after ``max_iter`` iterations, without a
+    warning: an inexact step is fine for Gauss-Newton and Levenberg-Marquardt, whose line
+    search or gain ratio checks it. If CG breaks down (a numerically singular damped
+    system), the solver returns the preconditioned gradient step ``-M^{-1} g`` instead,
+    which is still a descent direction.
 
     Args:
-        preconditioner: ``"jacobi"`` (default) divides by ``diag(H) + damping``. A callable
-            ``preconditioner(H, damping)`` returning ``v -> M^{-1} v`` supplies your own
-            (for example block-Jacobi, inverting each parameter block's diagonal block).
-            None disables preconditioning.
+        tol (float, optional): relative residual at which CG stops; must be positive.
+            Default: ``1e-6``
+        max_iter (int, optional): maximum number of CG iterations per solve.
+            Default: ``500``
+        preconditioner (str or Callable, optional): ``"jacobi"`` divides by
+            ``diag(H) + damping``. A callable ``preconditioner(H, damping)`` returning
+            ``v -> M^{-1} v`` supplies your own (for example block-Jacobi, inverting each
+            parameter block's diagonal block). ``None`` disables preconditioning.
+            Default: ``"jacobi"``
 
-    Needs the optional dependency ``torchsparsegradutils`` (``pip install "piazzi[sparse]"``).
+    Returns:
+        LinearSolver: ``solver(H, g, damping) -> d``, for the ``linear_solver`` argument of
+        :func:`piazzi.gauss_newton`.
 
     .. _torchsparsegradutils: https://github.com/cai4cai/torchsparsegradutils
     """
