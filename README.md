@@ -31,6 +31,21 @@ res = piazzi.levenberg_marquardt(system, torch.tensor([1.0, 0.5]))
 print(res.x, res.message)
 ```
 
+## Notebooks
+
+The notebooks in [`notebooks/`](notebooks) run locally or in Google Colab. On Colab, the first cell installs `piazzi` from GitHub.
+
+| Notebook | Description | |
+|---|---|---|
+| [Robust nonlinear regression](notebooks/robust_regression.ipynb) | The [SciPy Cookbook robust regression example](https://scipy-cookbook.readthedocs.io/items/robust_regression.html) with Levenberg-Marquardt and L-BFGS: robust losses (Huber, soft L1, Cauchy, arctan) through IRLS normal equations, checked against `scipy.optimize.least_squares`. | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/robust_regression.ipynb) |
+
+To run them locally:
+
+```bash
+uv sync --group notebooks
+uv run jupyter lab notebooks/
+```
+
 ## Development
 
 ```bash
