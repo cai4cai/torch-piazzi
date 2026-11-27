@@ -43,8 +43,13 @@ def check_lsq_solution(problem, res):
 # piazzi.least_squares
 
 
+# Not a singularity problem: cond(J^T J) peaks near 1e6, fine in float64. This large-residual
+# problem makes the GN direction poorly aligned with the gradient, so Armijo only accepts tiny
+# steps and GN crawls (cost ~25 after 500 iterations). Truncating small singular values helps
+# only with a cutoff (~1e-3) so aggressive that GN then stalls on ill-conditioned linear
+# problems. LM (and a dog-leg prototype) solve it.
 GN_STALLS = pytest.mark.xfail(
-    reason="pure Gauss-Newton stalls where J^T J is nearly singular; Levenberg-Marquardt solves it", strict=True
+    reason="pure Gauss-Newton crawls on this large-residual problem; Levenberg-Marquardt solves it", strict=True
 )
 LSQ_CASES = [
     pytest.param(p, m, id=f"{p.name}-{m}", marks=GN_STALLS if (p.name, m) == ("bvp", "gn") else ())
