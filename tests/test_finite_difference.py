@@ -88,11 +88,39 @@ def test_float32_default_step_is_usable():
     torch.testing.assert_close(J, torch.tensor([[2.0, 0.0], [2.0, 1.0]]), atol=2e-3, rtol=2e-3)
 
 
-def test_no_parameters_and_zero_tangent():
+def test_no_parameters():
     fd = piazzi.finite_difference(lambda x: x.sum().reshape(1) + 1)
     xg = torch.zeros(0, dtype=F64, requires_grad=True)
     fd(xg).sum().backward()
     assert xg.grad.shape == (0,)
+
+
+@pytest.mark.parametrize("scheme", ["central", "forward"])
+def test_zero_tangent_gives_a_zero_column_not_nan(scheme):
+    """A parameter that never reaches ``fun`` has a zero tangent: its Jacobian column is 0, not 0 / 0."""
+    fd = piazzi.finite_difference(lambda x: x**2, scheme=scheme)
+    x = torch.tensor([1.0, 2.0], dtype=F64)
+    with quiet_jvp_warnings():
+        J = torch.func.jacfwd(lambda p: fd(torch.stack([p[0], x[1]])))(x)
+        _, jv = torch.func.jvp(fd, (x,), (torch.zeros(2, dtype=F64),))
+    torch.testing.assert_close(J, torch.tensor([[2.0, 0.0], [0.0, 0.0]], dtype=F64), atol=1e-5, rtol=1e-5)
+    assert torch.equal(jv, torch.zeros(2, dtype=F64))
+    res = piazzi.least_squares(lambda p: fd(torch.stack([p[0], x[1]])) - 1.0, x, damping="marquardt")
+    assert torch.isfinite(res.fun) and abs(res.x[0].item() - 1.0) < 1e-4
+
+
+def test_manifold_without_degrees_of_freedom():
+    M = piazzi.Subset(3, [0, 1, 2])  # every entry fixed
+    fd = piazzi.finite_difference(lambda x: x**2, manifold=M)
+    x = torch.tensor([1.0, 2.0, 3.0], dtype=F64)
+    delta = torch.zeros(0, dtype=F64, requires_grad=True)
+    fd(M.plus(x, delta)).sum().backward()
+    assert delta.grad.shape == (0,)
+
+
+def test_function_must_return_a_tensor():
+    with pytest.raises(TypeError, match="has_aux"):
+        piazzi.finite_difference(lambda x: (x, x))(torch.ones(2, dtype=F64))
 
 
 def test_invalid_arguments():

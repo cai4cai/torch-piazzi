@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import torch
 
-from ._common import quiet_jvp_warnings
+from ._common import quiet_jvp_warnings, transfer
 from ._manifolds import Manifold
 
 __all__ = ["finite_difference"]
@@ -35,9 +35,12 @@ class _Counter:
         """
         m = self.manifold
         zero = x.new_zeros(m.tangent_size(x))
+        if zero.numel() == 0:  # every parameter fixed: no directions (jacfwd cannot differentiate in nothing)
+            return x.new_zeros(0, x.numel())
         with torch.enable_grad(), quiet_jvp_warnings():
             P = torch.func.jacfwd(lambda d: m.plus(x, d).reshape(-1))(zero)
-        return torch.linalg.pinv(P)
+        # an SVD of a small matrix: in float64 on the CPU, as for the normal equations (MPS has no float64)
+        return transfer(torch.linalg.pinv(transfer(P, "cpu", torch.float64)), x.device, x.dtype)
 
     def displaced(self, x: torch.Tensor, t: torch.Tensor | None = None, delta: torch.Tensor | None = None):
         """Return the points ``x +- h d`` and the step ``h``.
@@ -52,7 +55,7 @@ class _Counter:
         h = self.default_eps(x.dtype)  # tangent coordinates are already relative to the point
         return self.manifold.plus(x, h * delta), self.manifold.plus(x, -h * delta), h
 
-    def step(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def step(self, x: torch.Tensor, t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Return the displacement ``h * t`` and the step ``h``, with ``h`` relative to ``|x|``.
 
         For a coordinate direction ``e_i`` this is ``eps * max(|x_i|, 1) * e_i``, the per-coordinate
@@ -61,13 +64,22 @@ class _Counter:
         """
         eps = self.default_eps(x.dtype)
         a = t.abs()
-        scale = (a * x.abs().clamp(min=1)).sum() / a.sum().clamp(min=torch.finfo(x.dtype).tiny)
+        total = a.sum()
+        # a zero direction still gets a positive step (the difference is then exactly zero, not 0 / 0)
+        scale = torch.where(
+            total > 0, (a * x.abs().clamp(min=1)).sum() / total.clamp(min=torch.finfo(x.dtype).tiny), 1.0
+        )
         return eps * scale * t, eps * scale
 
     def call(self, x: torch.Tensor) -> torch.Tensor:
         self.n_evals += 1
-        with torch.no_grad():  # a copy, so that fun may modify its argument or reuse its output
-            return self.fun(x.detach().clone()).detach().clone()
+        with torch.no_grad():  # fun gets a copy, so that it may modify its argument
+            out = self.fun(x.detach().clone())
+        if not isinstance(out, torch.Tensor):
+            raise TypeError(
+                f"fun must return a tensor, got {type(out).__name__} (finite_difference does not support has_aux)"
+            )
+        return out.detach().clone()  # a copy, so that fun may reuse its output buffer
 
 
 class _FiniteDifference(torch.autograd.Function):
