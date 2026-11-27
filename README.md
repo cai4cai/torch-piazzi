@@ -23,7 +23,7 @@ As in SciPy, `loss` is `"linear"` (the default), `"huber"`, `"soft_l1"`, `"cauch
 
 The gradient is `Jᵀ(ρ′ ⊙ r)`. By default the curvature model is `Jᵀ diag(ρ′) J` (`curvature="irls"`), the iteratively reweighted least-squares model that Ceres Solver also uses for these losses. `curvature="scipy"` uses SciPy's `max(ρ′ + 2ρ″z, ε)` weights instead. It is more accurate for inliers but nearly singular when most residuals start out as outliers. Both models converge to the same minimiser.
 
-The normal equations are solved in float64 on the CPU by default, so the objective itself can run in float32 on a GPU or MPS device. Every solver returns an `OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. You can pass `callback(info)` to record the iterates or to stop early by returning `True`.
+The normal equations are solved in float64 on the CPU by default, so the objective itself can run in float32 on a GPU or MPS device. `damping="marquardt"` scales the Levenberg-Marquardt damping (and the Gauss-Newton ridge) by `diag(H)`, as Ceres does. Use it when parameters have very different units; it plays the role of SciPy's `x_scale="jac"`. Every solver returns an `OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. You can pass `callback(info)` to record the iterates or to stop early by returning `True`.
 
 ### Manifolds: poses and rotations
 
@@ -52,6 +52,16 @@ res.x  # a 4 x 4 rigid transform
 **Set `max_step` for the problem's units.** It caps every tangent component, so it applies to radians and translation units alike. Its default of 1 can slow down a large translation.
 
 The [`_manifolds.py`](src/piazzi/_manifolds.py) docstring explains how this design compares with Ceres, [PyPose](https://github.com/pypose/pypose) and [GeoTorch](https://github.com/lezcano/geotorch). [`tests/test_ceres_manifolds.py`](tests/test_ceres_manifolds.py) ports Ceres's manifold and rotation tests.
+
+### Large sparse problems
+
+`system(x)` may return `H` as a sparse COO or CSR tensor, as in bundle adjustment, where `J^T J` has millions of entries but is 99.7 % zeros. `gauss_newton` then needs only the diagonal of `H` and products with it. The `linear_solver` argument chooses how the damped system `(H + diag(damping)) d = -g` is solved:
+
+| Linear solver | Notes |
+|---|---|
+| `piazzi.dense_solver` | Direct `torch.linalg.solve`. This is the default for a dense `H`. |
+| `piazzi.cg_solver(tol, max_iter, preconditioner="jacobi")` | Preconditioned conjugate gradients from [torchsparsegradutils](https://github.com/cai4cai/torchsparsegradutils). This is the default for a sparse `H`. It accepts your own preconditioner, for example block-Jacobi. It is an optional dependency: `pip install "piazzi[sparse]"`. |
+| any `solver(H, g, damping) -> d` | For example a Schur-complement solver that eliminates the points in bundle adjustment. The [bundle adjustment notebook](notebooks/bundle_adjustment.ipynb) shows one. |
 
 ## Third-party backends
 
@@ -96,6 +106,7 @@ The notebooks in [`notebooks/`](notebooks) run locally or in Google Colab. On Co
 
 | Notebook | Description | |
 |---|---|---|
+| [Bundle adjustment](notebooks/bundle_adjustment.ipynb) | The [SciPy Cookbook bundle adjustment example](https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html) (49 cameras, 7776 points), with each camera pose on SE(3) (`piazzi.SE3` in a `piazzi.Product`), autodiff Jacobians through the manifold, sparse normal equations, and two linear solvers: torchsparsegradutils' CG and a Schur complement. It is compared with `scipy.optimize.least_squares`. | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/bundle_adjustment.ipynb) |
 | [Robust nonlinear regression](notebooks/robust_regression.ipynb) | The [SciPy Cookbook robust regression example](https://scipy-cookbook.readthedocs.io/items/robust_regression.html) with `piazzi.least_squares` and L-BFGS: robust losses (Huber, soft L1, Cauchy, arctan, custom), checked against `scipy.optimize.least_squares`. | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/robust_regression.ipynb) |
 
 To run them locally:
