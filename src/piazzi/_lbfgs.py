@@ -7,7 +7,8 @@ from collections.abc import Callable
 
 import torch
 
-from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, split_aux
+from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract, split_aux
+from ._manifolds import Manifold
 
 __all__ = ["lbfgs_armijo"]
 
@@ -17,6 +18,7 @@ def lbfgs_armijo(
     x0: torch.Tensor,
     *,
     has_aux: bool = False,
+    manifold: Manifold | None = None,
     value_fun: Callable | None = None,
     max_iter: int = 100,
     lr: float = 1.0,
@@ -55,6 +57,12 @@ def lbfgs_armijo(
             backtracking evaluates ``fun`` itself, recording its graph for the deferred
             backward pass. If ``fun`` is much cheaper without a graph, pass
             ``value_fun=fun`` to backtrack under ``torch.no_grad`` instead.
+        manifold: optional :class:`piazzi.Manifold` for ``x`` (for example
+            :class:`piazzi.SE3`). The gradient is then taken with respect to the tangent
+            vector ``delta`` of ``fun(manifold.plus(x, delta))`` at ``delta = 0``, steps are
+            applied with ``manifold.plus``, and the curvature pairs are kept in tangent
+            coordinates without vector transport (as in Ceres's line-search solver).
+            ``max_step`` and ``step_tol`` apply to the tangent step.
         lr: initial step length along the L-BFGS direction.
         callback: called with an :class:`IterationInfo` after every iteration; returning
             True stops the run.
@@ -62,24 +70,33 @@ def lbfgs_armijo(
     x, shape = check_x0(x0)
     counts = {"fg": 0, "f": 0}
 
+    def leaf(xv):
+        # The variable to differentiate with respect to, and the point to pass to fun: x itself,
+        # or, on a manifold, the tangent vector delta = 0 and the point plus(x, delta).
+        if manifold is None:
+            var = xv.detach().reshape(shape).requires_grad_(True)
+            return var, var
+        var = xv.new_zeros(manifold.tangent_size(xv)).requires_grad_(True)
+        return var, manifold.plus(xv.detach(), var).reshape(shape)
+
     def eval_full(xv):
-        xg = xv.detach().reshape(shape).requires_grad_(True)
         with torch.enable_grad():
+            var, xg = leaf(xv)
             loss, aux = split_aux(fun(xg), has_aux)
-            (grad,) = torch.autograd.grad(loss, xg)
+            (grad,) = torch.autograd.grad(loss, var)
         counts["fg"] += 1
         return loss.detach(), detach_tree(aux), grad.detach().reshape(-1)
 
     def eval_trial(xv):
         """Value and aux at ``xv``, keeping the graph so that ``accept`` can add the gradient."""
-        xg = xv.detach().reshape(shape).requires_grad_(True)
         with torch.enable_grad():
+            var, xg = leaf(xv)
             loss, aux = split_aux(fun(xg), has_aux)
-        return loss.detach(), detach_tree(aux), (loss, xg)
+        return loss.detach(), detach_tree(aux), (loss, var)
 
     def accept(pending):
-        loss, xg = pending
-        (grad,) = torch.autograd.grad(loss, xg)
+        loss, var = pending
+        (grad,) = torch.autograd.grad(loss, var)
         counts["fg"] += 1
         return grad.detach().reshape(-1)
 
@@ -112,6 +129,8 @@ def lbfgs_armijo(
     f, aux, g = eval_full(x)
     if not torch.isfinite(f):
         return result(0, False, "objective is not finite at x0")
+    if g.numel() == 0:  # a manifold with no degrees of freedom (e.g. Subset with every entry fixed)
+        return result(0, True, "no free parameters")
     S: list[torch.Tensor] = []
     Y: list[torch.Tensor] = []
     fails = 0
@@ -138,7 +157,7 @@ def lbfgs_armijo(
             d, gtd = -g, -torch.dot(g, g).item()
         t = lr if S else lr * min(1.0, 1.0 / max(g.abs().sum().item(), 1e-12))
         t = min(t, max_step / max(d.abs().max().item(), 1e-12))
-        x_new = x + t * d
+        x_new = retract(manifold, x, t * d)
         f_new, aux_new, pending = eval_trial(x_new)
         n_bt = 0
         while not armijo_ok(f_new.item(), f_val + c1 * t * gtd) and n_bt < max_backtracks:
@@ -147,7 +166,7 @@ def lbfgs_armijo(
             denom = 2.0 * (f_new.item() - f_val - gtd * t)
             t_q = -gtd * t * t / denom if denom > 0 else 0.5 * t
             t = min(max(t_q, 0.1 * t), 0.5 * t)
-            x_new = x + t * d
+            x_new = retract(manifold, x, t * d)
             if value_fun is None:
                 f_new, aux_new, pending = eval_trial(x_new)
             else:
@@ -173,7 +192,7 @@ def lbfgs_armijo(
         else:
             g_new = accept(pending)
             pending = None
-        s_vec, y_vec = x_new - x, g_new - g
+        s_vec, y_vec = t * d, g_new - g  # tangent step (equals x_new - x without a manifold)
         if torch.dot(s_vec, y_vec).item() > 1e-10:
             S.append(s_vec)
             Y.append(y_vec)

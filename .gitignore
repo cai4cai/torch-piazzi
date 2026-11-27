@@ -7,3 +7,5 @@ dist/
 .ruff_cache/
 .ipynb_checkpoints/
 .DS_Store
+# Data downloaded by the notebooks
+notebooks/*.bz2

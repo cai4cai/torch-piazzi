@@ -9,6 +9,7 @@ import torch
 
 from ._common import Callback, OptimizeResult
 from ._lbfgs import lbfgs_armijo
+from ._manifolds import Manifold
 from ._torch_optim import torch_optimizer
 
 __all__ = ["MINIMIZE_METHODS", "minimize"]
@@ -24,6 +25,7 @@ def minimize(
     method: str | type[torch.optim.Optimizer] = "lbfgs_armijo",
     *,
     has_aux: bool = False,
+    manifold: Manifold | None = None,
     callback: Callback | None = None,
     options: dict[str, Any] | None = None,
 ) -> OptimizeResult:
@@ -33,7 +35,9 @@ def minimize(
     from autograd. ``method`` names a solver from :data:`piazzi.MINIMIZE_METHODS` (case
     insensitive); ``"lbfgs_armijo"`` (:func:`piazzi.lbfgs_armijo`) is currently the only
     one. As in SciPy, solver-specific settings go in ``options``, for example
-    ``options={"max_iter": 500, "step_tol": 1e-8}``.
+    ``options={"max_iter": 500, "step_tol": 1e-8}``. ``manifold`` (for example
+    :class:`piazzi.SE3`) keeps ``x`` on a constrained set; see :func:`piazzi.lbfgs_armijo`.
+    The ``torch.optim`` methods below do not support it.
 
     ``method`` can also be a ``torch.optim.Optimizer`` subclass, such as
     ``torch.optim.LBFGS`` or ``torch.optim.Adam``. ``options`` then holds its constructor
@@ -52,6 +56,8 @@ def minimize(
     so you can swap backends to compare them.
     """
     if isinstance(method, type) and issubclass(method, torch.optim.Optimizer):
+        if manifold is not None:
+            raise ValueError("manifold= is not supported with torch.optim optimisers; use method='lbfgs_armijo'")
         return torch_optimizer(fun, x0, method, has_aux=has_aux, callback=callback, **(options or {}))
     if not isinstance(method, str):
         raise TypeError(
@@ -61,4 +67,5 @@ def minimize(
     key = method.lower()
     if key not in MINIMIZE_METHODS:
         raise ValueError(f"method must be one of {sorted(MINIMIZE_METHODS)}, got {method!r}")
-    return MINIMIZE_METHODS[key](fun, x0, has_aux=has_aux, callback=callback, **(options or {}))
+    extra = {} if manifold is None else {"manifold": manifold}  # registered methods need not know manifolds
+    return MINIMIZE_METHODS[key](fun, x0, has_aux=has_aux, callback=callback, **extra, **(options or {}))

@@ -7,7 +7,9 @@ from collections.abc import Callable
 
 import torch
 
-from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree
+from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract, transfer
+from ._linear_solvers import LinearSolver, cg_solver, dense_solver, diagonal, is_sparse, matvec
+from ._manifolds import Manifold
 
 __all__ = ["gauss_newton", "levenberg_marquardt"]
 
@@ -18,6 +20,7 @@ def gauss_newton(
     *,
     method: str = "lm",
     has_aux: bool = False,
+    manifold: Manifold | None = None,
     value_fun: Callable | None = None,
     max_iter: int = 100,
     max_step: float = 1.0,
@@ -27,8 +30,10 @@ def gauss_newton(
     gn_ridge: float = 1e-6,
     tau: float = 1e-3,
     max_rejections: int = 6,
+    damping: str = "identity",
     solve_dtype: torch.dtype = torch.float64,
     solve_device: str | torch.device = "cpu",
+    linear_solver: LinearSolver | None = None,
     callback: Callback | None = None,
 ) -> OptimizeResult:
     """Gauss-Newton (``method="gn"``) or Levenberg-Marquardt (``"lm"``).
@@ -49,18 +54,40 @@ def gauss_newton(
       (it is usually accepted too); after a rejection the trial is value-only. Stops
       after ``max_rejections`` rejections in a row.
 
+    ``damping="marquardt"`` replaces ``I`` by ``D = diag(H)`` (floored at
+    ``1e-12 * max(diag H)``), as in Ceres Solver: the ridge becomes ``gn_ridge * D`` and the
+    Levenberg-Marquardt damping ``lam * D`` with ``lam`` initialised to ``tau``. The damping
+    then scales with each parameter's curvature, which helps when parameters have very
+    different units (it plays the role of ``x_scale="jac"`` in
+    ``scipy.optimize.least_squares``).
+
     Both stop once a step is below ``step_tol`` (max-norm), or when the gradient is exactly
     zero (a stationary point, where ``H`` may be singular). A trial point with a non-finite
     value is never accepted, and a non-finite value at ``x0`` stops the run at once.
 
+    With a ``manifold`` (see :class:`piazzi.Manifold`), ``g`` and ``H`` are in its tangent
+    coordinates at ``x`` (:func:`piazzi.least_squares_system` builds them that way when given
+    the same manifold), and each step is applied as ``x <- manifold.plus(x, step)``.
+    ``max_step`` and ``step_tol`` then apply to the tangent step.
+
+    ``H`` may also be a sparse COO/CSR tensor, for problems with many parameters but few
+    nonzeros in ``J^T J`` (bundle adjustment, for example). The solver then only needs its
+    diagonal and matrix-vector products.
+
     Args:
         value_fun: optional cheaper ``value_fun(x) -> loss`` for value-only evaluations.
             Defaults to the loss returned by ``system``.
+        linear_solver: ``solver(H, g, damping) -> d`` solving ``(H + diag(damping)) d = -g`` (see
+            :func:`piazzi.dense_solver` and :func:`piazzi.cg_solver`). Defaults to a direct
+            dense solve for a dense ``H`` and to Jacobi-preconditioned conjugate gradients
+            (:func:`piazzi.cg_solver`, which needs ``torchsparsegradutils``) for a sparse one.
         callback: called with an :class:`IterationInfo` after every iteration; returning
             True stops the run.
     """
     if method not in ("gn", "lm"):
         raise ValueError("method must be 'gn' or 'lm'")
+    if damping not in ("identity", "marquardt"):
+        raise ValueError(f"damping must be 'identity' or 'marquardt', got {damping!r}")
     x, shape = check_x0(x0)
     counts = {"sys": 0, "f": 0}
 
@@ -80,9 +107,8 @@ def gauss_newton(
         counts["f"] += 1
         return loss.detach()
 
-    def host(g, H):
-        # Move first, then cast: casting on the source device fails where it lacks float64 (MPS).
-        return g.to(solve_device).to(solve_dtype), H.to(solve_device).to(solve_dtype)
+    def host(t):
+        return transfer(t, solve_device, solve_dtype)
 
     def at_noise_floor(f_new, f_val, step):
         # A step below step_tol whose value went up by no more than rounding noise: we are at a
@@ -94,9 +120,24 @@ def gauss_newton(
         # A non-finite trial value (NaN, or -inf, which would pass `<=`) is never accepted.
         return math.isfinite(fn) and (fn <= f_val + c1 * t * gtd or at_noise_floor(fn, f_val, t * d.abs().max().item()))
 
+    solvers = {}
+
+    def damping_vector(Hc, lam):
+        diag = diagonal(Hc)
+        if damping == "identity":
+            return torch.full_like(diag, lam)
+        return lam * diag.clamp(min=1e-12 * diag.max().item())
+
     def solve(Hc, gc, lam):
-        A = Hc + lam * torch.eye(Hc.shape[0], dtype=Hc.dtype, device=Hc.device)
-        d = torch.linalg.solve(A, -gc)
+        if linear_solver is not None:
+            solver = linear_solver
+        else:
+            key = is_sparse(Hc)
+            if key not in solvers:
+                solvers[key] = cg_solver() if key else dense_solver
+            solver = solvers[key]
+        with torch.no_grad():  # the step is never differentiated; keep custom solvers from recording a graph
+            d = solver(Hc, gc, damping_vector(Hc, lam))
         return d * min(1.0, max_step / max(d.abs().max().item(), 1e-12))
 
     def result(n_iter, converged, message):
@@ -120,25 +161,27 @@ def gauss_newton(
     f, aux, g, H = eval_sys(x)
     if not torch.isfinite(f):
         return result(0, False, "objective is not finite at x0")
-    gc, Hc = host(g, H)
-    lam = tau * Hc.diagonal().max().item()
+    if g.numel() == 0:  # a manifold with no degrees of freedom (e.g. Subset with every entry fixed)
+        return result(0, True, "no free parameters")
+    gc, Hc = host(g), host(H)
+    lam = tau * (diagonal(Hc).max().item() if damping == "identity" else 1.0)
     nu, rejections, have_sys = 2.0, 0, True
     for it in range(max_iter):
         f_val, f_start = f.item(), f
         if gc.abs().max().item() == 0:  # stationary, and H may be singular (e.g. J = 0)
             return result(it, True, "gradient is zero")
         if method == "gn":
-            d = solve(Hc, gc, gn_ridge * Hc.diagonal().mean().item())
+            d = solve(Hc, gc, gn_ridge * (diagonal(Hc).mean().item() if damping == "identity" else 1.0))
             gtd = torch.dot(gc, d).item()
             t = 1.0
-            dx = d.to(x)
-            x_new = x + dx
+            dx = transfer(d, x.device, x.dtype)
+            x_new = retract(manifold, x, dx)
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             n_bt = 0
 
             while not armijo_ok(f_new.item(), f_val, t, gtd, d) and n_bt < max_backtracks:
                 t *= 0.5
-                x_new = x + t * dx
+                x_new = retract(manifold, x, t * dx)
                 f_new, g_new = eval_value(x_new), None
                 n_bt += 1
             if not armijo_ok(f_new.item(), f_val, t, gtd, d):
@@ -148,7 +191,7 @@ def gauss_newton(
                 f_new, aux_new, g_new, H_new = eval_sys(x_new)
             step = t * d.abs().max().item()
             x, f, aux = x_new, f_new, aux_new
-            gc, Hc = host(g_new, H_new)
+            gc, Hc = host(g_new), host(H_new)
             stop = notify(it, f_start, True)
             if step < step_tol:
                 return result(it + 1, True, "step below step_tol")
@@ -157,8 +200,8 @@ def gauss_newton(
             continue
         # Levenberg-Marquardt.
         d = solve(Hc, gc, lam)
-        pred = -(torch.dot(gc, d) + 0.5 * d @ Hc @ d).item()
-        x_new = x + d.to(x)
+        pred = -(torch.dot(gc, d) + 0.5 * torch.dot(d, matvec(Hc, d))).item()
+        x_new = retract(manifold, x, transfer(d, x.device, x.dtype))
         if rejections == 0:  # after an accepted step the trial is usually accepted too
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             have_sys = True
@@ -178,7 +221,7 @@ def gauss_newton(
             nu, rejections = 2.0, 0
             step = d.abs().max().item()
             x, f, aux = x_new, f_new, aux_new
-            gc, Hc = host(g_new, H_new)
+            gc, Hc = host(g_new), host(H_new)
             stop = notify(it, f_start, True)
             if step < step_tol:
                 return result(it + 1, True, "step below step_tol")

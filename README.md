@@ -23,7 +23,45 @@ As in SciPy, `loss` is `"linear"` (the default), `"huber"`, `"soft_l1"`, `"cauch
 
 The gradient is `Jᵀ(ρ′ ⊙ r)`. By default the curvature model is `Jᵀ diag(ρ′) J` (`curvature="irls"`), the iteratively reweighted least-squares model that Ceres Solver also uses for these losses. `curvature="scipy"` uses SciPy's `max(ρ′ + 2ρ″z, ε)` weights instead. It is more accurate for inliers but nearly singular when most residuals start out as outliers. Both models converge to the same minimiser.
 
-The normal equations are solved in float64 on the CPU by default, so the objective itself can run in float32 on a GPU or MPS device. Every solver returns an `OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. You can pass `callback(info)` to record the iterates and the evaluations so far (`info.n_fun_grad`, `info.n_fun`, `info.n_system`), or to stop early by returning `True`.
+The normal equations are solved in float64 on the CPU by default, so the objective itself can run in float32 on a GPU or MPS device. `damping="marquardt"` scales the Levenberg-Marquardt damping (and the Gauss-Newton ridge) by `diag(H)`, as Ceres does. Use it when parameters have very different units; it plays the role of SciPy's `x_scale="jac"`. Every solver returns an `OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. You can pass `callback(info)` to record the iterates and the evaluations so far (`info.n_fun_grad`, `info.n_fun`, `info.n_system`), or to stop early by returning `True`.
+
+### Manifolds: poses and rotations
+
+Pass `manifold=` to `least_squares`, `gauss_newton`, `lbfgs_armijo` or `minimize` to keep `x` on a constrained set, as Ceres Solver's [`Manifold`](https://ceres-solver.readthedocs.io/latest/nnls_modeling.html#manifold) does. A manifold supplies `plus(x, delta)`, which moves `x` by a tangent vector. The solver takes its Jacobian or gradient with respect to `delta` at zero, by autodiff through `plus`, and applies each step as `x <- plus(x, step)`. A 4 x 4 pose therefore gives 6 Jacobian columns, and every iterate stays a rigid transform.
+
+| Manifold | Stored as | Tangent | Notes |
+|---|---|---|---|
+| `Euclidean(shape)` | any tensor | same size | The default behaviour; a shape is only needed inside `Product`. |
+| `Subset(size, constant)` | vector | free entries | Holds some entries fixed, like Ceres's `SubsetManifold`. |
+| `SO3(side="right")` | 3 x 3 rotation | 3 | `R @ so3_exp(w)` (body frame), or `so3_exp(w) @ R` with `side="left"`. |
+| `SE3(side="right", retraction="decoupled", pivot=None)` | 4 x 4 rigid transform | 6, `(rho, omega)` | `retraction="exp"` uses the true SE(3) exponential (a screw motion). `pivot` sets the point that rotations turn about. |
+| `Product(*manifolds)` | flat vector | sum | Use `M.join(...)` to build `x0` and `M.split(x)` to unpack it, for example a pose plus camera intrinsics. |
+
+The manifolds also provide `minus(y, x)`, which inverts `plus`. The solvers don't use it, but it measures errors between points. `so3_exp`, `so3_log`, `se3_exp`, `se3_log` and `so3_hat` work on batches.
+
+```python
+P, Q = ...  # matching 3D points, Q ~ R @ p + t
+res = piazzi.least_squares(
+    lambda T: P @ T[:3, :3].T + T[:3, 3] - Q, torch.eye(4), manifold=piazzi.SE3(pivot=P.mean(0)), max_step=1e3
+)
+res.x  # a 4 x 4 rigid transform
+```
+
+**Set the pivot for registration.** Put `pivot` at the centre of the object. If the object sits far from the origin, a rotation about the origin also moves it a long way. Rotation and translation are then strongly coupled and Gauss-Newton crawls. In the tests, a point set 140 units from the origin converges in 5 Gauss-Newton iterations with the pivot at its centre, and has not converged after 10 without it.
+
+**Set `max_step` for the problem's units.** It caps every tangent component, so it applies to radians and translation units alike. Its default of 1 can slow down a large translation.
+
+The [`_manifolds.py`](src/piazzi/_manifolds.py) docstring explains how this design compares with Ceres, [PyPose](https://github.com/pypose/pypose) and [GeoTorch](https://github.com/lezcano/geotorch). [`tests/test_ceres_manifolds.py`](tests/test_ceres_manifolds.py) ports Ceres's manifold and rotation tests.
+
+### Large sparse problems
+
+`system(x)` may return `H` as a sparse COO or CSR tensor, as in bundle adjustment, where `J^T J` has millions of entries but is 99.7 % zeros. `gauss_newton` then needs only the diagonal of `H` and products with it. The `linear_solver` argument chooses how the damped system `(H + diag(damping)) d = -g` is solved:
+
+| Linear solver | Notes |
+|---|---|
+| `piazzi.dense_solver` | Direct `torch.linalg.solve`. This is the default for a dense `H`. |
+| `piazzi.cg_solver(tol, max_iter, preconditioner="jacobi")` | Preconditioned conjugate gradients from [torchsparsegradutils](https://github.com/cai4cai/torchsparsegradutils). This is the default for a sparse `H`. It accepts your own preconditioner, for example block-Jacobi. It is an optional dependency: `pip install "piazzi[sparse]"`. |
+| any `solver(H, g, damping) -> d` | For example a Schur-complement solver that eliminates the points in bundle adjustment. The [bundle adjustment notebook](notebooks/bundle_adjustment.ipynb) shows one. |
 
 ### `torch.optim` optimisers
 
@@ -43,7 +81,7 @@ Each iteration is one optimiser step, so `callback` sees every iterate. `torch.o
 | Function | Backend | Notes |
 |---|---|---|
 | `piazzi.scipy.least_squares(fun, x0, loss=..., f_scale=...)` | [`scipy.optimize.least_squares`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html) | `fun` and the result use tensors. The Jacobian comes from forward-mode autodiff by default, as in `piazzi.least_squares`; `jac` can also be a PyTorch callable or SciPy's `"2-point"` / `"3-point"`. A PyTorch `loss` callable is supported, with derivatives from autograd. Other keyword arguments (`method`, `bounds`, `ftol`, ...) go to SciPy, and `result.raw` holds SciPy's own result. |
-| `piazzi.scipy.minimize(fun, x0, method=..., options=...)` | [`scipy.optimize.minimize`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html) | Same calling convention as `piazzi.minimize`, with any SciPy method. By default each evaluation returns the value and its autograd gradient together. `hess="autodiff"` / `hessp="autodiff"` give exact Hessians or Hessian-vector products for Newton-CG and the trust-region methods. `bounds` may hold tensors, and other keyword arguments (`tol`, `constraints`, ...) go to SciPy. |
+| `piazzi.scipy.minimize(fun, x0, method=..., options=...)` | [`scipy.optimize.minimize`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html) | Same calling convention as `piazzi.minimize` (except `manifold=`, which the SciPy wrappers do not support), with any SciPy method. By default each evaluation returns the value and its autograd gradient together. `hess="autodiff"` / `hessp="autodiff"` give exact Hessians or Hessian-vector products for Newton-CG and the trust-region methods. `bounds` may hold tensors, and other keyword arguments (`tol`, `constraints`, ...) go to SciPy. |
 
 ```bash
 pip install "piazzi[scipy] @ git+https://github.com/cai4cai/torch-piazzi"
@@ -79,6 +117,7 @@ The notebooks in [`notebooks/`](notebooks) run locally or in Google Colab. On Co
 
 | Notebook | Description | |
 |---|---|---|
+| [Bundle adjustment](notebooks/bundle_adjustment.ipynb) | The [SciPy Cookbook bundle adjustment example](https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html) (49 cameras, 7776 points), with each camera pose on SE(3) (`piazzi.SE3` in a `piazzi.Product`), autodiff Jacobians through the manifold, sparse normal equations, and two linear solvers: torchsparsegradutils' CG and a Schur complement. It is compared with `scipy.optimize.least_squares`, then run again in float32 on a GPU (CUDA or Apple MPS), either with the solve on the CPU in float64 or with everything on the GPU. | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/bundle_adjustment.ipynb) |
 | [Robust nonlinear regression](notebooks/robust_regression.ipynb) | The [SciPy Cookbook robust regression example](https://scipy-cookbook.readthedocs.io/items/robust_regression.html) with `piazzi.least_squares` and L-BFGS: robust losses (Huber, soft L1, Cauchy, arctan, custom), checked against `scipy.optimize.least_squares`. | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/robust_regression.ipynb) |
 | [The Rosenbrock function](notebooks/rosenbrock.ipynb) | The classic test problem, after the [Ceres gradient tutorial](https://ceres-solver.readthedocs.io/latest/gradient_tutorial.html) and the [pytorch-minimize example](https://github.com/rfeinman/pytorch-minimize/blob/main/examples/rosen_minimize.ipynb): piazzi's and PyTorch's L-BFGS (default and strong Wolfe) on the scalar function versus Gauss-Newton and Levenberg-Marquardt on its residuals, compared with SciPy's methods through `piazzi.scipy`, plus the N-dimensional version and float32. | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/rosenbrock.ipynb) |
 
