@@ -40,7 +40,8 @@ def _huber(z):
 
 def _soft_l1(z):
     t = 1 + z
-    return 2 * (t.sqrt() - 1), t.rsqrt(), -0.5 * t**-1.5
+    # 2 * (sqrt(t) - 1), written without the cancellation that rounds small costs to zero in float32.
+    return 2 * z / (t.sqrt() + 1), t.rsqrt(), -0.5 * t**-1.5
 
 
 def _cauchy(z):

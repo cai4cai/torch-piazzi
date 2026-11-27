@@ -93,7 +93,7 @@ def test_jac():
     ]
     for loss, f_scale, jac in cases:
         _, _, H = trivial_system(x, loss=loss, f_scale=f_scale, curvature="scipy")
-        assert H.item() == pytest.approx(jac**2, rel=1e-9), (loss_id(loss), f_scale)
+        assert H.item() == pytest.approx(jac**2, rel=1e-9, abs=0), (loss_id(loss), f_scale)
 
 
 class ExponentialFittingProblem:
@@ -171,6 +171,16 @@ def test_scipy_curvature_gn_converges():
 def test_bad_curvature():
     with pytest.raises(ValueError, match="curvature"):
         piazzi.least_squares_system(fun_trivial, loss="huber", curvature="exact")
+
+
+@pytest.mark.parametrize("loss", list(piazzi.LOSSES), ids=loss_id)
+def test_small_float32_costs_are_not_lost(loss):
+    # 2 * (sqrt(1 + z) - 1) rounds to zero for z = 1e-8 in float32, so LM saw no decrease.
+    z = torch.tensor([1e-8, 1e-6], dtype=torch.float32)
+    rho, _, _ = piazzi.LOSSES[loss](z)
+    assert torch.allclose(rho, z, rtol=1e-5, atol=0)
+    res = piazzi.least_squares(lambda x: x, torch.tensor([1e-4]), loss=loss)
+    assert abs(res.x.item()) < 1e-8, res.message
 
 
 def test_huber_derivatives_finite_at_zero():
