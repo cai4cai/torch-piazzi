@@ -13,7 +13,7 @@ For large sparse problems the solve dominates each iteration, so keeping it on t
 ## float32
 
 - Use tolerances that float32 can reach: `step_tol=1e-10` never triggers in float32.
-- Gauss-Newton, Levenberg-Marquardt and L-BFGS recognise a minimiser once the predicted decrease falls below the rounding noise of the loss, so `converged` is reported correctly at a float32 minimiser.
+- Gauss-Newton, Levenberg-Marquardt and L-BFGS recognise a minimiser once the predicted decrease falls below the rounding noise of the loss, or once a Newton-like step no longer moves `x` beyond a few units in the last place of each entry (as near a zero residual, where the loss's noise is absolute). So `converged` is reported correctly at a float32 minimiser.
 - Finite differences (in the {doc}`SciPy backends <backends>`) need a float64 `x0`: in float32 their steps are lost to rounding.
 
 ## Apple MPS
