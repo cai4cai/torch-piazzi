@@ -49,5 +49,6 @@ jobs:
         with:
           path: notebooks/problem-49-7776-pre.txt.bz2
           key: bal-ladybug-49-7776
-      # Fails on any error, warning or other stderr output in a cell.
-      - run: uv run --no-sync python scripts/execute_notebooks.py
+      # Fails on any error, warning or other stderr output in a cell. --smoke caps the iterations of the slow
+      # notebooks: this job checks that they run, not that the solvers converge.
+      - run: uv run --no-sync python scripts/execute_notebooks.py --smoke
