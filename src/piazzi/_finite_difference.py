@@ -164,18 +164,15 @@ class FiniteDifference:
 
 def finite_difference(
     fun: Callable, *, eps: float | None = None, scheme: str = "central", manifold: Manifold | None = None
-) -> FiniteDifference:
+) -> Callable:
     """Make a black-box function look differentiable, so that any solver can use it.
 
-    Use this when ``fun(x) -> tensor`` cannot be differentiated by autograd: a non-differentiable
+    Use this when ``fun(x) -> Tensor`` cannot be differentiated by autograd: a non-differentiable
     renderer or simulator, a library working on NumPy arrays, a measurement. The returned
     function gives the same values as ``fun`` and has finite-difference derivatives, in forward
-    mode (``torch.func.jacfwd``, which :func:`piazzi.least_squares` uses) and in reverse mode
+    mode (:func:`torch.func.jacfwd`, which :func:`piazzi.least_squares` uses) and in reverse mode
     (``backward``, which :func:`piazzi.minimize` uses), so solvers, ``manifold=`` and robust
-    losses work unchanged::
-
-        fd_fun = piazzi.finite_difference(simulate)
-        result = piazzi.least_squares(lambda x: fd_fun(x) - target, x0)
+    losses work unchanged.
 
     Every Jacobian costs ``n`` (``"forward"``) or ``2n`` (``"central"``) extra calls of ``fun``
     for ``n`` parameters, which is why this is a last resort: prefer autograd where it works. The
@@ -183,29 +180,53 @@ def finite_difference(
     ``n_evals`` attribute of the returned function, which counts every call of ``fun``.
 
     ``fun`` is called without gradient tracking, on a copy of its argument, and its result is
-    copied. It must return a tensor and be deterministic: noise larger than the step ruins the
-    differences. It runs on the device and in the dtype of ``x``, and so do the differences;
-    prefer float64, since in float32 the default step is large (about ``5e-3``) and a central
-    difference is accurate to roughly 1e-3 relative error at best.
+    copied. It must return a tensor (``has_aux`` is not supported) and be deterministic: noise
+    larger than the step ruins the differences. It runs on the device and in the dtype of ``x``,
+    and so do the differences. Prefer float64: in float32 the default step is large (about
+    ``5e-3``) and a central difference is accurate to roughly ``1e-3`` relative error at best.
 
-    The numerics follow ``torch.autograd.gradcheck``'s numerical Jacobian (central differences,
-    one coordinate at a time), with the step relative to the coordinate: ``eps * max(|x_i|, 1)``.
-    With ``manifold=M``, pass the same manifold to the solver (``least_squares(..., manifold=M)``).
-    The solver differentiates ``fun(M.plus(x, delta))`` at ``delta = 0``; the wrapper then recovers
-    the tangent coordinates ``delta`` of each direction and evaluates ``fun(M.plus(x, +-h * delta))``,
-    so ``fun`` only ever sees points on the manifold (a valid rotation matrix, say) and the step
-    ``h`` is in tangent coordinates (``eps``, not scaled by ``|x|``). Without ``manifold=``, the
-    differences are taken in ambient space along the tangent directions, so ``fun`` is evaluated
-    at points that leave the manifold by ``O(eps^2)``.
+    The numerics follow the numerical Jacobian of ``torch.autograd.gradcheck`` (central
+    differences, one coordinate at a time), with the step relative to the coordinate:
+    ``eps * max(|x_i|, 1)``.
+
+    With ``manifold=M``, pass the same manifold to the solver. The solver differentiates
+    ``fun(M.plus(x, delta))`` at ``delta = 0``; the wrapper then recovers the tangent
+    coordinates ``delta`` of each direction and evaluates ``fun(M.plus(x, +-h * delta))``, so
+    ``fun`` only ever sees points on the manifold (a valid rotation matrix, say), a Jacobian
+    costs ``2 * tangent_size`` calls, and the step ``h`` is ``eps`` in tangent coordinates (not
+    scaled by ``|x|``). Without ``manifold=``, the differences are taken in ambient space along
+    the tangent directions, so ``fun`` is evaluated at points that leave the manifold by
+    ``O(eps^2)``.
 
     Args:
-        fun: the black-box function of a tensor, returning a tensor.
-        eps: relative step. Default ``finfo.eps ** (1/3)`` for ``"central"`` (about ``6e-6`` in
-            float64) and ``finfo.eps ** (1/2)`` for ``"forward"``, the steps that balance
-            truncation and rounding error.
-        scheme: ``"central"`` (default; error ``O(eps^2)``, ``2n`` calls) or ``"forward"``
-            (error ``O(eps)``, ``n`` calls, reusing the value at ``x`` that the solver has
-            just computed).
-        manifold: the :class:`piazzi.Manifold` that the solver is given, if any, as above.
+        fun (Callable): the black-box function ``fun(x) -> Tensor`` of a tensor ``x``.
+
+    Keyword Args:
+        eps (float, optional): relative step. Default: ``finfo.eps ** (1/3)`` for ``"central"``
+            (about ``6e-6`` in float64) and ``finfo.eps ** (1/2)`` for ``"forward"``, the steps
+            that balance truncation and rounding error.
+        scheme (str, optional): ``"central"`` (error ``O(eps^2)``, ``2n`` calls) or
+            ``"forward"`` (error ``O(eps)``, ``n`` calls, reusing the value at ``x`` that the
+            solver has just computed). Default: ``"central"``
+        manifold (Manifold, optional): the :class:`piazzi.Manifold` that the solver is given,
+            if any, as above. Default: ``None``
+
+    Returns:
+        Callable: ``fd_fun(x) -> Tensor`` with the values of ``fun`` and finite-difference
+        derivatives. Its ``n_evals`` attribute counts the calls of ``fun`` so far, the
+        finite-difference ones included.
+
+    Example::
+
+        >>> def simulate(x):  # a stand-in for code that autograd cannot see through
+        ...     y = x.detach().numpy()
+        ...     return torch.from_numpy(y**2 + y[::-1])
+        >>> fd_fun = piazzi.finite_difference(simulate)
+        >>> target = torch.tensor([5.0, 8.0, 7.0], dtype=torch.float64)
+        >>> res = piazzi.least_squares(lambda x: fd_fun(x) - target, torch.ones(3, dtype=torch.float64))
+        >>> torch.allclose(fd_fun(res.x), target, atol=1e-6)
+        True
+        >>> fd_fun.n_evals > res.n_system  # every difference calls simulate
+        True
     """
     return FiniteDifference(fun, eps, scheme, manifold)

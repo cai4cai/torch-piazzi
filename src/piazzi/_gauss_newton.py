@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 import torch
 
-from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract, transfer
+from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract, transfer, unmoved
 from ._linear_solvers import LinearSolver, cg_solver, dense_solver, diagonal, is_sparse, matvec
 from ._manifolds import Manifold
 
@@ -36,59 +36,123 @@ def gauss_newton(
     linear_solver: LinearSolver | None = None,
     callback: Callback | None = None,
 ) -> OptimizeResult:
-    """Gauss-Newton (``method="gn"``) or Levenberg-Marquardt (``"lm"``).
+    """Gauss-Newton or Levenberg-Marquardt on user-supplied normal equations.
 
-    ``system(x)`` returns ``(loss, g, H)`` (``(loss, g, H, aux)`` with ``has_aux``): the
-    loss, its gradient (n,) and a positive semi-definite curvature model (n, n), usually
-    ``J^T W J``. It is called without gradient tracking. Only the n x n system is moved to
-    ``solve_device`` and solved in ``solve_dtype`` (float64 on the CPU by default, which
-    avoids float32 trouble and is cheap for small n). Steps are capped so that no
-    coordinate moves more than ``max_step``.
+    Minimises a loss given its gradient ``g`` and a curvature model ``H`` (usually
+    ``J^T W J``) at each point. Only the ``(n, n)`` system is moved to ``solve_device`` and
+    solved in ``solve_dtype``: float64 on the CPU by default, which avoids float32 trouble
+    and is cheap when ``n`` is small. Steps are capped so that no coordinate moves more
+    than ``max_step``.
 
-    - ``"gn"``: step ``-(H + ridge I)^{-1} g`` with ``ridge = gn_ridge * mean(diag H)``,
-      then Armijo backtracking (halving) with value-only evaluations; stops when no
-      decrease is found.
-    - ``"lm"``: step ``-(H + lam I)^{-1} g`` with ``lam`` initialised to
-      ``tau * max(diag H)`` and updated from the gain ratio (actual / predicted decrease)
-      by Nielsen's rule. After an accepted step the next trial evaluates the full system
-      (it is usually accepted too); after a rejection the trial is value-only. Stops
-      after ``max_rejections`` rejections in a row.
+    - ``method="lm"`` (Levenberg-Marquardt): step ``-(H + lam D)^{-1} g``, with ``lam``
+      initialised from ``tau`` and updated from the gain ratio (actual / predicted
+      decrease) by Nielsen's rule. After an accepted step the next trial evaluates the
+      full system (it is usually accepted too); after a rejection the trial is
+      value-only.
+    - ``method="gn"`` (Gauss-Newton): step ``-(H + ridge D)^{-1} g``, then Armijo
+      backtracking (halving) with value-only evaluations. If ``H`` is indefinite, or a
+      custom ``linear_solver`` returns an uphill step, the iteration falls back to
+      steepest descent.
 
-    ``damping="marquardt"`` replaces ``I`` by ``D = diag(H)`` (floored at
-    ``1e-12 * max(diag H)``), as in Ceres Solver: the ridge becomes ``gn_ridge * D`` and the
-    Levenberg-Marquardt damping ``lam * D`` with ``lam`` initialised to ``tau``. The damping
-    then scales with each parameter's curvature, which helps when parameters have very
-    different units (it plays the role of ``x_scale="jac"`` in
-    ``scipy.optimize.least_squares``).
+    ``D`` is the identity, or ``diag(H)`` with ``damping="marquardt"``.
 
-    Both stop once a step is below ``step_tol`` (max-norm), or when the gradient is exactly
-    zero (a stationary point, where ``H`` may be singular). They also stop, as converged,
-    when a step fails but the model predicted a decrease below the rounding noise of the
-    loss, ``8 * eps * |loss|`` in the loss's dtype (for Levenberg-Marquardt, the prediction
-    of the first trial from the current point): no step can then show measurable progress.
-    This is what ends a float32 objective at its minimiser, where rounding noise in the
-    gradient keeps steps above ``step_tol``; it plays the role of Ceres Solver's
-    ``function_tolerance``. A trial point with a non-finite
-    value is never accepted, and a non-finite value at ``x0`` stops the run at once.
+    The run stops, as converged, once a step is below ``step_tol`` (max-norm), when the
+    gradient is exactly zero (a stationary point, where ``H`` may be singular), or when a
+    step fails but the model predicted a decrease below the rounding noise of the loss,
+    ``8 * eps * |loss|`` in the loss's dtype (for Levenberg-Marquardt, the prediction of
+    the first trial from the current point). That last test ends a float32 objective at
+    its minimiser, where rounding noise in the gradient keeps steps above ``step_tol``; it
+    plays the role of Ceres Solver's ``function_tolerance``. Near a zero residual the loss's
+    rounding noise is absolute and that test cannot see it, so a failed step also counts as
+    converged when the Gauss-Newton step, which estimates the distance to the minimiser,
+    leaves ``x`` unmoved: every entry within 64 units in the last place of its scale
+    (``|x|``, or the manifold's :meth:`~piazzi.Manifold.entry_scale`). The loss cannot
+    change measurably along such a step. For Levenberg-Marquardt, whose first trial from a
+    point is damped, the undamped Gauss-Newton step is checked as well (one extra linear
+    solve), and a trial with a non-finite value never counts. A trial point with a
+    non-finite value is never accepted, and a non-finite value at ``x0`` stops the run at
+    once.
 
-    With a ``manifold`` (see :class:`piazzi.Manifold`), ``g`` and ``H`` are in its tangent
-    coordinates at ``x`` (:func:`piazzi.least_squares_system` builds them that way when given
-    the same manifold), and each step is applied as ``x <- manifold.plus(x, step)``.
-    ``max_step`` and ``step_tol`` then apply to the tangent step.
-
-    ``H`` may also be a sparse COO/CSR tensor, for problems with many parameters but few
+    ``H`` may be a sparse COO or CSR tensor, for problems with many parameters but few
     nonzeros in ``J^T J`` (bundle adjustment, for example). The solver then only needs its
     diagonal and matrix-vector products.
 
     Args:
-        value_fun: optional cheaper ``value_fun(x) -> loss`` for value-only evaluations.
-            Defaults to the loss returned by ``system``.
-        linear_solver: ``solver(H, g, damping) -> d`` solving ``(H + diag(damping)) d = -g`` (see
-            :func:`piazzi.dense_solver` and :func:`piazzi.cg_solver`). Defaults to a direct
-            dense solve for a dense ``H`` and to Jacobi-preconditioned conjugate gradients
-            (:func:`piazzi.cg_solver`, which needs ``torchsparsegradutils``) for a sparse one.
-        callback: called with an :class:`IterationInfo` after every iteration; returning
-            True stops the run.
+        system (Callable): ``system(x) -> (loss, g, H)``, or ``(loss, g, H, aux)`` with
+            ``has_aux=True``. ``loss`` is a scalar tensor, ``g`` its gradient of shape
+            ``(n,)`` and ``H`` a positive semi-definite curvature model of shape ``(n, n)``,
+            dense or sparse. ``x`` has the shape of ``x0``. Called without gradient
+            tracking. :func:`piazzi.least_squares_system` builds one from residuals.
+        x0 (Tensor): starting point, of any shape. ``n`` is its number of elements, or the
+            tangent size of ``manifold``.
+
+    Keyword Args:
+        method (str, optional): ``"lm"`` (Levenberg-Marquardt) or ``"gn"`` (Gauss-Newton).
+            Default: ``"lm"``
+        has_aux (bool, optional): whether ``system`` also returns an auxiliary output
+            (any tree of tensors), returned detached in ``result.aux`` and
+            ``info.aux``. Default: ``False``
+        manifold (Manifold, optional): keeps ``x`` on a manifold such as
+            :class:`piazzi.SE3`. ``g`` and ``H`` are then in tangent coordinates at ``x``
+            (:func:`piazzi.least_squares_system` builds them that way when given the same
+            manifold), each step is applied as ``x <- manifold.plus(x, step)``, and
+            ``max_step`` and ``step_tol`` apply to the tangent step. Default: ``None``
+        value_fun (Callable, optional): a cheaper ``value_fun(x) -> loss`` (or
+            ``(loss, aux)``) for value-only evaluations. Default: ``None``, which uses
+            the loss that ``system`` returns.
+        max_iter (int, optional): maximum number of iterations, accepted or rejected.
+            Default: ``100``
+        max_step (float, optional): largest change of any coordinate in one step (in the
+            units of ``x``, or of the tangent vector). Default: ``1.0``
+        step_tol (float, optional): stop, as converged, once a step's max-norm is below
+            this. Default: ``1e-5``
+        c1 (float, optional): Armijo sufficient-decrease constant (``method="gn"``).
+            Default: ``1e-4``
+        max_backtracks (int, optional): maximum number of step halvings in one line search
+            (``method="gn"``). Default: ``10``
+        gn_ridge (float, optional): ridge added to ``H`` for ``method="gn"``, relative to
+            ``mean(diag H)`` (or to ``D`` with ``damping="marquardt"``). Default: ``1e-6``
+        tau (float, optional): initial Levenberg-Marquardt damping, relative to
+            ``max(diag H)`` (or to ``D`` with ``damping="marquardt"``). Default: ``1e-3``
+        max_rejections (int, optional): stop after this many rejected Levenberg-Marquardt
+            steps in a row. Default: ``6``
+        damping (str, optional): ``"identity"`` (``D = I``) or ``"marquardt"``
+            (``D = diag(H)``, floored at ``1e-12 * max(diag H)``, as in Ceres Solver). The
+            Marquardt damping scales with each parameter's curvature, which helps when
+            parameters have very different units; it plays the role of
+            ``x_scale="jac"`` in :func:`scipy.optimize.least_squares`.
+            Default: ``"identity"``
+        solve_dtype (torch.dtype, optional): dtype of the linear solve.
+            Default: ``torch.float64``
+        solve_device (str or torch.device, optional): device of the linear solve.
+            Default: ``"cpu"``
+        linear_solver (LinearSolver, optional): ``solver(H, g, damping) -> d`` solving
+            ``(H + diag(damping)) d = -g`` (see :data:`piazzi.LinearSolver`).
+            Default: ``None``, which uses :func:`piazzi.dense_solver` for a dense ``H`` and
+            :func:`piazzi.cg_solver` (Jacobi-preconditioned conjugate gradients, which
+            needs ``torchsparsegradutils``) for a sparse one.
+        callback (Callable, optional): called with an :class:`piazzi.IterationInfo` after
+            every iteration, accepted or not; returning ``True`` stops the run.
+            Default: ``None``
+
+    Returns:
+        OptimizeResult: the solution ``x`` (shaped like ``x0``), the final loss ``fun`` and
+        ``aux``, ``n_iter``, the counts ``n_system`` (full system evaluations) and ``n_fun``
+        (value-only evaluations), and ``converged`` and ``message``.
+
+    See Also:
+        - :func:`piazzi.least_squares`: the high-level interface, which builds ``system`` from
+          residuals with :func:`piazzi.least_squares_system` and passes its other keyword arguments
+          here.
+
+    Example::
+
+        >>> t = torch.linspace(0, 1, 20, dtype=torch.float64)
+        >>> y = 2 * torch.exp(-3 * t)
+        >>> system = piazzi.least_squares_system(lambda p: p[0] * torch.exp(-p[1] * t) - y)
+        >>> res = piazzi.gauss_newton(system, torch.tensor([1.0, 1.0], dtype=torch.float64))
+        >>> res.x
+        tensor([2.0000, 3.0000], dtype=torch.float64)
     """
     if method not in ("gn", "lm"):
         raise ValueError("method must be 'gn' or 'lm'")
@@ -150,6 +214,13 @@ def gauss_newton(
             return torch.full_like(diag, lam)
         return lam * diag.clamp(min=1e-12 * diag.max().item())
 
+    def gauss_newton_unmoved(Hc, gc, x):
+        """Whether the (lightly ridged) Gauss-Newton step from ``x`` leaves it unmoved."""
+        d = solve(Hc, gc, gn_ridge * (diagonal(Hc).mean().item() if damping == "identity" else 1.0))
+        if not torch.dot(gc, d).item() < 0:  # not a descent direction: no estimate of the distance
+            return False
+        return unmoved(manifold, x, retract(manifold, x, transfer(d, x.device, x.dtype)))
+
     def solve(Hc, gc, lam):
         if linear_solver is not None:
             solver = linear_solver
@@ -197,13 +268,15 @@ def gauss_newton(
         if method == "gn":
             d = solve(Hc, gc, gn_ridge * (diagonal(Hc).mean().item() if damping == "identity" else 1.0))
             gtd = torch.dot(gc, d).item()
-            if not gtd < 0:  # an indefinite H or an inexact custom solver: fall back to steepest descent
+            newton = gtd < 0
+            if not newton:  # an indefinite H or an inexact custom solver: fall back to steepest descent
                 d = -gc * min(1.0, max_step / gc.abs().max().item())
                 gtd = torch.dot(gc, d).item()
             t = 1.0
             dx = transfer(d, x.device, x.dtype)
             x_new = retract(manifold, x, dx)
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
+            full_unmoved = newton and math.isfinite(f_new.item()) and unmoved(manifold, x, x_new)
             n_bt = 0
 
             while not armijo_ok(f_new.item(), f_val, t, gtd, d) and n_bt < max_backtracks:
@@ -213,6 +286,8 @@ def gauss_newton(
                 n_bt += 1
             if not armijo_ok(f_new.item(), f_val, t, gtd, d):
                 notify(it, f_start, False)
+                if full_unmoved:
+                    return result(it + 1, True, "step below the resolution of x")
                 if below_noise(-gtd, f_new.item(), f_val):
                     return result(it + 1, True, "predicted decrease below rounding noise")
                 return result(it + 1, False, "line search failed")
@@ -235,6 +310,10 @@ def gauss_newton(
             # later predictions, which must not pass for convergence far from a minimiser.
             pred_first = pred
         x_new = retract(manifold, x, transfer(d, x.device, x.dtype))
+        if rejections == 0:
+            # The first trial is damped, so its size alone does not estimate the distance to the
+            # minimiser: when it leaves x unmoved, the Gauss-Newton step is checked as well, once.
+            first_unmoved, gn_checked = unmoved(manifold, x, x_new), None
         if rejections == 0:  # after an accepted step the trial is usually accepted too
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             have_sys = True
@@ -265,6 +344,11 @@ def gauss_newton(
             nu *= 2.0
             rejections += 1
             stop = notify(it, f_start, False)
+            if first_unmoved and math.isfinite(fn):
+                if gn_checked is None:
+                    gn_checked = gauss_newton_unmoved(Hc, gc, x)
+                if gn_checked:
+                    return result(it + 1, True, "step below the resolution of x")
             if below_noise(pred_first, fn, f_val):
                 return result(it + 1, True, "predicted decrease below rounding noise")
             if rejections >= max_rejections:
@@ -275,5 +359,17 @@ def gauss_newton(
 
 
 def levenberg_marquardt(system: Callable, x0: torch.Tensor, **kwargs) -> OptimizeResult:
-    """:func:`gauss_newton` with ``method="lm"``."""
+    """Levenberg-Marquardt: :func:`piazzi.gauss_newton` with ``method="lm"``.
+
+    Args:
+        system (Callable): ``system(x) -> (loss, g, H)``, as for :func:`piazzi.gauss_newton`.
+        x0 (Tensor): starting point.
+        **kwargs: any other keyword argument of :func:`piazzi.gauss_newton`.
+
+    Returns:
+        OptimizeResult: as for :func:`piazzi.gauss_newton`.
+
+    See Also:
+        - :func:`piazzi.least_squares`: the high-level interface, which runs this method by default.
+    """
     return gauss_newton(system, x0, method="lm", **kwargs)

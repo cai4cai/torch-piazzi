@@ -38,3 +38,5 @@ The design follows Ceres's `Manifold`, which keeps parameters as plain tensors. 
 ## Writing your own manifold
 
 Subclass {class}`~piazzi.Manifold`, set `ambient_shape` (the shape a point is stored in, or `None` for any shape) and implement `tangent_size(x)` and `plus(x, delta)`; `minus(y, x)` is optional. The solvers only need `plus` and its derivative at `delta = 0`, which they take by autodiff, so `plus` must be differentiable in forward mode (`torch.func.jacfwd`).
+
+Optionally override `entry_scale(x)`, the size each entry of a point is computed at. The solvers treat a change of a few units in the last place of it as rounding noise when they decide that a Newton-like step no longer moves `x`. The default, `|x|`, suits independent coordinates; {class}`~piazzi.SO3` and {class}`~piazzi.SE3` use 1 for rotation-matrix entries, whose rows have norm 1.

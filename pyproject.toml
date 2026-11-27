@@ -1,14 +1,31 @@
 [project]
 name = "piazzi"
 dynamic = ["version"]
-description = "Deterministic PyTorch solvers for small nonlinear fitting problems: L-BFGS with Armijo line search, Gauss-Newton, Levenberg-Marquardt."
+description = "Deterministic PyTorch solvers for nonlinear fitting problems: L-BFGS with Armijo line search, Gauss-Newton, Levenberg-Marquardt."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "CAI4CAI" }]
 requires-python = ">=3.10"
 dependencies = ["torch>=2.1"]
-keywords = ["pytorch", "optimisation", "least-squares", "gauss-newton", "levenberg-marquardt", "l-bfgs", "registration"]
+# Kept in sync with the GitHub repository topics.
+keywords = [
+    "autodiff",
+    "bundle-adjustment",
+    "gauss-newton",
+    "image-registration",
+    "lbfgs",
+    "levenberg-marquardt",
+    "lie-groups",
+    "nonlinear-least-squares",
+    "optimization",
+    "pose-estimation",
+    "python",
+    "pytorch",
+    "quasi-newton",
+    "scipy",
+    "se3",
+]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Science/Research",
@@ -59,7 +76,9 @@ path = "src/piazzi/__init__.py"
 packages = ["src/piazzi"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# src/ is collected for the examples in docstrings (doctests).
+testpaths = ["tests", "src"]
+addopts = "--doctest-modules"
 filterwarnings = ["error"]
 
 [tool.ruff]
@@ -67,5 +86,13 @@ line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP"]
+select = ["E", "F", "W", "I", "B", "UP", "D"]
 ignore = ["E702"]
+
+[tool.ruff.lint.pydocstyle]
+# PyTorch-style docstrings: Google sections with types, ``Default: ...`` (see AGENTS.md).
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Docstring rules apply to the library; tests, scripts, notebooks and the docs config are exempt.
+"!src/**" = ["D"]

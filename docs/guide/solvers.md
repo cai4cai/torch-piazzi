@@ -1,20 +1,33 @@
 # Solvers
 
-piazzi has two families of native solvers: L-BFGS for a scalar objective, and Gauss-Newton / Levenberg-Marquardt for least squares, where curvature comes from the normal equations.
+piazzi has two layers of solvers:
 
-| Function | Needs | Notes |
+- **High-level interfaces**, modelled on SciPy: {func}`~piazzi.least_squares` and {func}`~piazzi.minimize`. They take the objective in its most natural form (residuals or a scalar), choose a method by name, and pass the method's settings through. Start here.
+- **Method-specific solvers**: {func}`~piazzi.gauss_newton`, {func}`~piazzi.levenberg_marquardt` and {func}`~piazzi.lbfgs_armijo`. These are the algorithms the high-level interfaces call, with every setting exposed. Call them directly when you build the curvature yourself, or want one method's full control.
+
+## High-level interfaces
+
+| Function | Objective | Methods |
 |---|---|---|
-| {func}`~piazzi.lbfgs_armijo` | value + gradient (autograd) | L-BFGS with Armijo backtracking. It usually costs one evaluation per iteration. Each trial point is evaluated with its autograd graph, and the backward pass runs only at the accepted point, so a rejected trial costs a forward pass. |
-| {func}`~piazzi.minimize` | value + gradient (autograd) | Like {func}`scipy.optimize.minimize`: picks a scalar minimiser by name ({data}`piazzi.MINIMIZE_METHODS`; currently only `"lbfgs_armijo"`) and passes it `options`. `method` can also be a `torch.optim` optimiser class (see {doc}`torch-optim`). |
-| {func}`~piazzi.gauss_newton` with `method="gn"` | `(loss, g, H)` | Gauss-Newton with Armijo backtracking. |
-| {func}`~piazzi.gauss_newton` with `method="lm"`, or {func}`~piazzi.levenberg_marquardt` | `(loss, g, H)` | Levenberg-Marquardt with Nielsen's damping update. |
-| {func}`~piazzi.least_squares` | residuals `r(x)` | Like {func}`scipy.optimize.least_squares`: Levenberg-Marquardt (or `method="gn"`) on the normal equations from {func}`~piazzi.least_squares_system`, with an optional robust loss. |
-| {func}`~piazzi.least_squares_system` | residuals `r(x)` | Builds `(F, g, H)` with forward-mode autodiff: `(0.5‖r‖², Jᵀr, JᵀJ)`, or the robust equivalents. |
+| {func}`~piazzi.least_squares` | residuals `r(x)`, with an optional robust loss | Like {func}`scipy.optimize.least_squares`. `method="lm"` (default, Levenberg-Marquardt) or `"gn"` (Gauss-Newton), run by {func}`~piazzi.gauss_newton` on the normal equations that {func}`~piazzi.least_squares_system` builds by forward-mode autodiff. Other keyword arguments (`max_iter`, `step_tol`, `damping`, `linear_solver`, ...) go to {func}`~piazzi.gauss_newton`. |
+| {func}`~piazzi.minimize` | scalar `f(x)`, gradient from autograd | Like {func}`scipy.optimize.minimize`. `method` names a solver in {data}`piazzi.MINIMIZE_METHODS` (currently `"lbfgs_armijo"`, the default), with its settings in `options`. `method` can also be a `torch.optim` optimiser class (see {doc}`torch-optim`). |
+
+Both accept `manifold=` (see {doc}`manifolds`), `has_aux=` and `callback=`, and return an {class}`~piazzi.OptimizeResult`. {func}`piazzi.scipy.least_squares` and {func}`piazzi.scipy.minimize` have the same calling conventions and run SciPy's methods instead (see {doc}`backends`).
+
+## Method-specific solvers
+
+| Function | Needs | Method |
+|---|---|---|
+| {func}`~piazzi.gauss_newton` with `method="lm"`, or {func}`~piazzi.levenberg_marquardt` | `system(x) -> (loss, g, H)` | Levenberg-Marquardt with Nielsen's damping update. |
+| {func}`~piazzi.gauss_newton` with `method="gn"` | `system(x) -> (loss, g, H)` | Gauss-Newton with Armijo backtracking. |
+| {func}`~piazzi.lbfgs_armijo` | `f(x)`, gradient from autograd | L-BFGS with Armijo backtracking. It usually costs one evaluation per iteration. Each trial point is evaluated with its autograd graph, and the backward pass runs only at the accepted point, so a rejected trial costs a forward pass. |
+
+{func}`~piazzi.least_squares_system` is the building block between the two layers: it turns residuals into the `system(x) -> (loss, g, H)` that {func}`~piazzi.gauss_newton` needs, that is `(0.5‖r‖², Jᵀr, JᵀJ)` or its robust equivalent.
 
 ## Choosing a solver
 
 - **You have residuals** (a model minus data, reprojection errors, point-to-point distances): use {func}`~piazzi.least_squares`. Gauss-Newton curvature usually converges in far fewer evaluations than a quasi-Newton method.
-- **You have a scalar objective** that isn't a sum of squares (a likelihood, an image similarity measure): use {func}`~piazzi.minimize` or {func}`~piazzi.lbfgs_armijo` directly.
+- **You have a scalar objective** that isn't a sum of squares (a likelihood, an image similarity measure): use {func}`~piazzi.minimize`.
 - **You build the normal equations yourself** (for example per-observation Jacobians assembled into a sparse `JᵀJ`): pass a `system(x) -> (loss, g, H)` to {func}`~piazzi.gauss_newton`. See {doc}`sparse`.
 
 `method="lm"` (the default) adapts its damping to how well the model predicts each step, which makes it the safer choice. `method="gn"` takes the undamped step with a backtracking line search; with SciPy's curvature model and mostly outlying residuals it copes better than Levenberg-Marquardt (see {doc}`least-squares`).
@@ -27,7 +40,7 @@ Steps are capped so that no coordinate moves more than `max_step` (default 1). S
 
 ## Results and stopping
 
-Every solver returns an {class}`~piazzi.OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. `converged` means a minimiser was reached to working precision: the step fell below `step_tol`, or the gradient is zero. In float32, Gauss-Newton, Levenberg-Marquardt and L-BFGS also recognise a minimiser once the predicted decrease falls below the rounding noise of the loss.
+Every solver returns an {class}`~piazzi.OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. `converged` means a minimiser was reached to working precision: the step fell below `step_tol`, or the gradient is zero. In float32, Gauss-Newton, Levenberg-Marquardt and L-BFGS also recognise a minimiser once the predicted decrease falls below the rounding noise of the loss, or once a Newton-like step no longer moves `x` beyond a few units in the last place of each entry (message `step below the resolution of x`). The second rule catches minimisers near a zero residual, where the loss's rounding noise is absolute rather than relative to the loss.
 
 The evaluation counts are split by kind, because their costs differ: `n_fun_grad` (value and gradient), `n_fun` (value only, as in a line search) and `n_system` (normal equations).
 

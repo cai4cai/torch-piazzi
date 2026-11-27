@@ -36,41 +36,64 @@ def least_squares(
     callback: Callable | None = None,
     **kwargs,
 ) -> OptimizeResult:
-    """Call ``scipy.optimize.least_squares`` on a residual function written in PyTorch.
+    """Run :func:`scipy.optimize.least_squares` on a residual function written in PyTorch.
 
-    ``fun(x)`` takes a tensor shaped like ``x0`` and returns the residuals. It runs in the
-    dtype and on the device of ``x0``; SciPy itself works in float64 on the CPU, and the
-    wrapper converts at each call. Unlike SciPy, the default Jacobian comes from
-    forward-mode autodiff, as in :func:`piazzi.least_squares`, so the two run on the same
-    derivatives.
+    ``fun`` runs in the dtype and on the device of ``x0``; SciPy itself works in float64 on
+    the CPU, and the wrapper converts at each call. Unlike SciPy, the default Jacobian comes
+    from forward-mode autodiff, as in :func:`piazzi.least_squares`, so the two run on the
+    same derivatives.
 
     Args:
-        jac: ``"autodiff"`` (default) for ``torch.func.jacfwd``; a callable
-            ``jac(x) -> J`` that returns a tensor of shape (m, n); or one of SciPy's
-            finite-difference schemes (``"2-point"``, ``"3-point"``; not ``"cs"``). Finite differences
-            need a float64 ``x0``: in float32 their steps are lost to rounding.
-        loss: a SciPy loss name, or a callable ``rho(z)`` written in PyTorch as for
-            :func:`piazzi.least_squares`. The wrapper gives SciPy its derivatives from
-            autograd.
-        f_scale: soft margin between inlier and outlier residuals.
-        bounds: as in SciPy: a ``(lb, ub)`` pair or a ``Bounds``. Tensors and arrays in it
-            are converted and flattened to match the flat ``x0``; 0-dim ones are scalars.
-        args, kwargs: as in SciPy, extra arguments for ``fun`` and a callable ``jac``.
-        **kwargs: passed to ``scipy.optimize.least_squares`` (``method``, ``ftol``,
-            ``xtol``, ``gtol``, ``max_nfev``, ``x_scale``, ...). Tensors given as ``x_scale``
-            or ``diff_step`` are converted like bounds.
-        callback: called after every iteration with an :class:`piazzi.IterationInfo`, as for
-            the native solvers (``fun`` is the cost; ``aux`` is None); returning True stops
-            the run. Needs SciPy 1.16 or later.
+        fun (Callable): ``fun(x) -> r``, where ``x`` has the shape of ``x0`` and ``r`` is a
+            tensor of residuals of any shape.
+        x0 (Tensor): starting point, of any shape.
+
+    Keyword Args:
+        jac (str or Callable, optional): ``"autodiff"`` for :func:`torch.func.jacfwd`; a
+            callable ``jac(x) -> J`` returning a tensor of shape ``(m, n)``; or one of
+            SciPy's finite-difference schemes, ``"2-point"`` or ``"3-point"`` (not
+            ``"cs"``). Finite differences need a float64 ``x0``: in float32 their steps are
+            lost to rounding. Default: ``"autodiff"``
+        loss (str or Callable, optional): a SciPy loss name, or a callable ``rho(z)``
+            written in PyTorch as for :func:`piazzi.least_squares`; the wrapper gives SciPy
+            its derivatives from autograd. Default: ``"linear"``
+        f_scale (float, optional): soft margin between inlier and outlier residuals, in the
+            units of ``r``. Default: ``1.0``
+        bounds (tuple or scipy.optimize.Bounds, optional): as in SciPy, a ``(lb, ub)`` pair
+            or a :class:`scipy.optimize.Bounds`. Tensors and arrays in it are converted and
+            flattened to match the flat ``x0``; 0-dim ones are scalars.
+            Default: ``(-inf, inf)``
+        callback (Callable, optional): called after every iteration with an
+            :class:`piazzi.IterationInfo`, as for the native solvers (``fun`` is the cost;
+            ``aux`` is ``None``); returning ``True`` stops the run. Needs SciPy 1.16 or
+            later. Default: ``None``
+        **kwargs: other keyword arguments of :func:`scipy.optimize.least_squares`
+            (``method``, ``ftol``, ``xtol``, ``gtol``, ``max_nfev``, ``x_scale``, ...).
+            Tensors given as ``x_scale`` or ``diff_step`` are converted like ``bounds``.
+            As in SciPy, ``args=(...)`` and ``kwargs={...}`` hold extra positional and
+            keyword arguments for ``fun`` and a callable ``jac`` (not options for SciPy);
+            both are empty by default.
 
     Returns:
-        An :class:`piazzi.OptimizeResult`. ``x`` has the shape, dtype and device of ``x0``,
-        and ``fun`` is the cost. SciPy does not report iterations, so ``n_iter`` is its
-        Jacobian evaluation count (``njev``), or ``nfev`` when ``njev`` is not reported.
-        The counts are calls the wrapper made: ``n_fun`` residual evaluations (including
-        those of finite differences, which SciPy's ``nfev`` leaves out for "trf" and
-        "dogbox") and ``n_system`` Jacobian evaluations (``jac="autodiff"`` or a callable).
-        ``converged`` is SciPy's ``success``. ``raw`` is SciPy's own result.
+        OptimizeResult: ``x`` with the shape, dtype and device of ``x0``, and ``fun`` the
+        cost. SciPy does not report iterations, so ``n_iter`` is its Jacobian evaluation
+        count (``njev``), or ``nfev`` when ``njev`` is not reported. The counts are calls the
+        wrapper made: ``n_fun`` residual evaluations (including those of finite
+        differences, which SciPy's ``nfev`` leaves out for ``"trf"`` and ``"dogbox"``) and
+        ``n_system`` Jacobian evaluations (``jac="autodiff"`` or a callable).
+        ``converged`` is SciPy's ``success``, and ``raw`` is SciPy's own result.
+
+    See Also:
+        - :func:`piazzi.least_squares`: the native solver with the same calling convention.
+
+    Example::
+
+        >>> t = torch.linspace(0, 4, 40, dtype=torch.float64)
+        >>> y = 2.5 * torch.exp(-1.3 * t)
+        >>> x0 = torch.tensor([1.0, 0.5], dtype=torch.float64)
+        >>> res = piazzi.scipy.least_squares(lambda p: p[0] * torch.exp(-p[1] * t) - y, x0)
+        >>> res.x
+        tensor([2.5000, 1.3000], dtype=torch.float64)
     """
     check_loss(loss, f_scale)
     like, shape = check_x0(x0)

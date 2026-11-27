@@ -1,4 +1,4 @@
-"""piazzi: deterministic PyTorch solvers for small nonlinear fitting problems.
+"""piazzi: deterministic PyTorch solvers for nonlinear fitting problems.
 
 Named after Giuseppe Piazzi, who discovered Ceres in 1801; Gauss recovered it from
 Piazzi's observations with the method of least squares.
