@@ -28,7 +28,8 @@ extensions = [
 ]
 
 exclude_patterns = ["_build", "jupyter_execute", "**.ipynb_checkpoints"]
-nitpicky = False
+# Every cross-reference must resolve (with -W, CI fails on a broken one).
+nitpicky = True
 
 # -- Markdown and notebooks -------------------------------------------------------------
 myst_enable_extensions = ["colon_fence", "dollarmath", "deflist"]
@@ -54,12 +55,28 @@ _copy_notebooks()
 
 # -- API reference --------------------------------------------------------------------
 autodoc_member_order = "bysource"
-autodoc_typehints = "description"
-autodoc_typehints_description_target = "documented_params"
+# The docstrings give each argument's type, PyTorch style, so autodoc doesn't repeat the annotations.
+autodoc_typehints = "none"
 autodoc_default_options = {"members": True, "show-inheritance": True}
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
 napoleon_use_rtype = False
+# Link the short type names of PyTorch-style docstrings ("x (Tensor, optional): ...").
+napoleon_preprocess_types = True
+napoleon_type_aliases = {
+    "Tensor": ":class:`torch.Tensor`",
+    "Callable": ":class:`~collections.abc.Callable`",
+    "Any": ":data:`~typing.Any`",
+    "Manifold": ":class:`piazzi.Manifold`",
+    "OptimizeResult": ":class:`piazzi.OptimizeResult`",
+    "LinearSolver": ":data:`piazzi.LinearSolver`",
+    "torch.dtype": ":class:`torch.dtype`",
+    "torch.device": ":class:`torch.device`",
+    "array_like": ":term:`numpy:array_like`",
+    "sequence": ":term:`python:sequence`",
+    "numpy.ndarray": ":class:`numpy.ndarray`",
+    "scipy.optimize.Bounds": ":class:`scipy.optimize.Bounds`",
+}
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),

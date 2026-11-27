@@ -33,53 +33,73 @@ def minimize(
     options: dict[str, Any] | None = None,
     **kwargs,
 ) -> OptimizeResult:
-    """Call ``scipy.optimize.minimize`` on a scalar function written in PyTorch.
+    """Run :func:`scipy.optimize.minimize` on a scalar function written in PyTorch.
 
     It has the calling convention of :func:`piazzi.minimize` (``fun``, ``x0``, ``method``,
     ``has_aux``, ``callback`` and ``options``), so you can swap backends to compare them;
-    ``method`` and the keys of ``options`` are SciPy's. ``fun(x)`` takes a tensor shaped
-    like ``x0`` and returns a scalar tensor (``(loss, aux)`` with ``has_aux``). It runs in
-    the dtype and on the device of ``x0``; SciPy itself works in float64 on the CPU, and
-    the wrapper converts at each call. Use a float64 ``x0`` for tight tolerances: SciPy's
-    line searches and finite differences struggle with float32 noise.
+    ``method`` and the keys of ``options`` are SciPy's. ``fun`` runs in the dtype and on the
+    device of ``x0``; SciPy itself works in float64 on the CPU, and the wrapper converts at
+    each call. Use a float64 ``x0`` for tight tolerances: SciPy's line searches and finite
+    differences struggle with float32 noise.
 
     Args:
-        method: any SciPy method (``"BFGS"``, ``"L-BFGS-B"``, ``"Newton-CG"``,
-            ``"trust-exact"``, ...). The default ``None`` lets SciPy choose.
-        jac: ``"autodiff"`` (default) computes the value and gradient together with
-            autograd, in one evaluation; a callable ``jac(x) -> grad`` in PyTorch; or
-            SciPy's finite differences (``"2-point"``, ``"3-point"``, or ``None``; not ``"cs"``).
-            Methods that use no gradient (Nelder-Mead, Powell, COBYLA, COBYQA) get none.
-        hess: ``"autodiff"`` for the exact Hessian from autograd; a callable
-            ``hess(x) -> H`` in PyTorch returning (n, n); or anything SciPy accepts
-            (``"2-point"``, a ``HessianUpdateStrategy`` such as ``scipy.optimize.BFGS()``).
-            Only Newton-type and trust-region methods use it.
-        hessp: ``"autodiff"`` for Hessian-vector products from autograd (double backward),
-            or a callable ``hessp(x, p) -> H @ p`` in PyTorch.
-        bounds: as in SciPy; a ``Bounds`` holding tensors, or an (n, 2) tensor of
-            ``(min, max)`` pairs, is converted.
-        callback: called after every iteration with an :class:`piazzi.IterationInfo`
-            (tensors, with the evaluation counts so far), as for the native solvers;
-            returning True stops the run. ``aux`` is set when SciPy's last evaluation was
-            at the iterate. TNC reports only ``x`` (``fun`` is then NaN unless known) and
-            cannot be stopped.
-        options: SciPy's method-specific options.
-        args: as in SciPy, extra arguments for ``fun`` and callable ``jac``, ``hess`` and
-            ``hessp``.
-        **kwargs: passed to ``scipy.optimize.minimize`` (``tol``, ``constraints``, ...).
-            Constraint functions receive NumPy arrays.
+        fun (Callable): ``fun(x) -> loss``, or ``(loss, aux)`` with ``has_aux=True``, where
+            ``x`` has the shape of ``x0`` and ``loss`` is a scalar tensor.
+        x0 (Tensor): starting point, of any shape.
+        method (str or Callable, optional): any SciPy method (``"BFGS"``, ``"L-BFGS-B"``,
+            ``"Newton-CG"``, ``"trust-exact"``, ...). Default: ``None``, which lets SciPy
+            choose.
+
+    Keyword Args:
+        jac (str or Callable, optional): ``"autodiff"`` computes the value and gradient
+            together with autograd, in one evaluation; a callable ``jac(x) -> grad`` in
+            PyTorch; or SciPy's finite differences (``"2-point"``, ``"3-point"``, or
+            ``None``; not ``"cs"``). Methods that use no gradient (Nelder-Mead, Powell,
+            COBYLA, COBYQA) get none. Default: ``"autodiff"``
+        hess (str or Callable, optional): ``"autodiff"`` for the exact Hessian from
+            autograd; a callable ``hess(x) -> H`` in PyTorch returning a tensor of shape
+            ``(n, n)``; or anything SciPy accepts (``"2-point"``, or a
+            :class:`scipy.optimize.HessianUpdateStrategy` such as
+            :class:`scipy.optimize.BFGS`). Only Newton-type and trust-region methods use it.
+            Default: ``None``
+        hessp (str or Callable, optional): ``"autodiff"`` for Hessian-vector products from
+            autograd (double backward), or a callable ``hessp(x, p) -> H @ p`` in PyTorch.
+            Default: ``None``
+        bounds (scipy.optimize.Bounds or Tensor, optional): as in SciPy; a
+            :class:`scipy.optimize.Bounds` holding tensors, or a tensor of shape ``(n, 2)``
+            of ``(min, max)`` pairs, is converted. Default: ``None``
+        has_aux (bool, optional): whether ``fun`` also returns an auxiliary output (any tree
+            of tensors), returned detached in ``result.aux``. Default: ``False``
+        callback (Callable, optional): called after every iteration with an
+            :class:`piazzi.IterationInfo` (tensors, with the evaluation counts so far), as
+            for the native solvers; returning ``True`` stops the run. ``aux`` is set when
+            SciPy's last evaluation was at the iterate. TNC reports only ``x`` (``fun`` is
+            then NaN unless known) and cannot be stopped. Default: ``None``
+        options (dict, optional): SciPy's method-specific options. Default: ``None``
+        args (tuple, optional): as in SciPy, extra arguments for ``fun`` and callable
+            ``jac``, ``hess`` and ``hessp``.
+        **kwargs: other keyword arguments of :func:`scipy.optimize.minimize` (``tol``,
+            ``constraints``, ...). Constraint functions receive NumPy arrays.
 
     Returns:
-        An :class:`piazzi.OptimizeResult`. ``x`` has the shape, dtype and device of ``x0``,
-        ``fun`` is the final value and ``aux`` its auxiliary output (with ``has_aux``).
-        ``n_iter`` is SciPy's ``nit``. The counts are calls the wrapper made, not SciPy's
-        ``nfev`` / ``njev`` / ``nhev``: ``n_fun_grad`` counts value-and-gradient evaluations
-        (``jac="autodiff"``) or calls to a callable ``jac``, ``n_fun`` value-only ones
-        (including finite-difference ones), and ``n_system`` Hessian or Hessian-vector
-        product evaluations. ``converged`` is SciPy's ``success``. ``raw`` is SciPy's own
+        OptimizeResult: ``x`` with the shape, dtype and device of ``x0``, ``fun`` the final
+        value and ``aux`` its auxiliary output (with ``has_aux``). ``n_iter`` is SciPy's
+        ``nit``. The counts are calls the wrapper made, not SciPy's ``nfev`` / ``njev`` /
+        ``nhev``: ``n_fun_grad`` counts value-and-gradient evaluations (``jac="autodiff"``)
+        or calls to a callable ``jac``, ``n_fun`` value-only ones (including
+        finite-difference ones), and ``n_system`` Hessian or Hessian-vector product
+        evaluations. ``converged`` is SciPy's ``success``, and ``raw`` is SciPy's own
         result. ``fun`` and ``aux`` come from the last evaluation at SciPy's final ``x``; if
         SciPy did not evaluate there last, the wrapper evaluates ``fun`` once more, which
         the counts do not include.
+
+    Example::
+
+        >>> def rosenbrock(x):
+        ...     return (100 * (x[1:] - x[:-1] ** 2) ** 2 + (1 - x[:-1]) ** 2).sum()
+        >>> res = piazzi.scipy.minimize(rosenbrock, torch.tensor([-1.2, 1.0], dtype=torch.float64), method="BFGS")
+        >>> res.x
+        tensor([1.0000, 1.0000], dtype=torch.float64)
     """
     like, shape = check_x0(x0)
     if jac == "cs" or hess == "cs":

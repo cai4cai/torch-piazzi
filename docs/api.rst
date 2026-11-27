@@ -44,9 +44,11 @@ Robust losses
 .. autofunction:: robust_cost
 
 .. py:data:: LOSSES
+   :type: dict[str, Callable]
 
    The built-in robust losses by name: ``"linear"``, ``"huber"``, ``"soft_l1"``, ``"cauchy"``
-   and ``"arctan"``, as in :func:`scipy.optimize.least_squares`.
+   and ``"arctan"``, as in :func:`scipy.optimize.least_squares`. Each maps ``z`` to
+   ``(rho(z), rho'(z), rho''(z))`` in closed form, so the normal equations need no autograd.
 
 Manifolds
 ---------
@@ -75,14 +77,14 @@ Linear solvers
 
 .. py:data:: LinearSolver
 
-   The signature of a linear solver for :func:`gauss_newton`: a callable
-   ``solver(H, g, damping) -> d`` that solves ``(H + diag(damping)) d = -g``. ``H`` may be
-   dense or sparse (COO or CSR).
+   Signature of a linear solver for :func:`gauss_newton`: ``solver(H, g, damping) -> d``
+   solves ``(H + diag(damping)) d = -g``, with ``H`` of shape ``(n, n)`` (dense, or sparse COO
+   or CSR) and ``g``, ``damping`` and ``d`` of shape ``(n,)``.
 
 SciPy backend
 -------------
 
-.. currentmodule:: piazzi.scipy
+.. module:: piazzi.scipy
 
 Requires the ``piazzi[scipy]`` extra.
 

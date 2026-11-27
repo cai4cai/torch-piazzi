@@ -13,15 +13,25 @@ import torch
 
 @dataclass
 class IterationInfo:
-    """Passed to ``callback`` after every iteration (accepted or not).
+    """State of a solver run, passed to ``callback`` after every iteration, accepted or not.
 
-    ``x`` and ``fun`` are the current iterate and its value: the new point after an
-    accepted step, the unchanged point after a rejected one. ``fun_start`` is the value
-    at the start of the iteration.
+    Use the evaluation counts to plot progress against cost rather than iterations, which
+    hide the evaluations a line search spends.
 
-    ``n_fun_grad``, ``n_fun`` and ``n_system`` count the evaluations so far, including this
-    iteration's, as in :class:`OptimizeResult`. Use them to plot progress against cost
-    rather than iterations, which hide the evaluations a line search spends.
+    Attributes:
+        iteration (int): index of the iteration, from 0.
+        x (Tensor): the current iterate, shaped like ``x0``: the new point after an accepted
+            step, the unchanged point after a rejected one.
+        fun (Tensor): the objective value at ``x`` (a scalar tensor).
+        fun_start (Tensor): the objective value at the start of the iteration.
+        aux (Any): the auxiliary output at ``x`` with ``has_aux=True``, detached, else
+            ``None``.
+        accepted (bool): whether the iteration's step was accepted.
+        n_fun_grad (int): value-and-gradient evaluations so far, including this
+            iteration's.
+        n_fun (int): value-only evaluations so far.
+        n_system (int): evaluations of second-order information so far (see
+            :class:`piazzi.OptimizeResult`).
     """
 
     iteration: int
@@ -37,16 +47,27 @@ class IterationInfo:
 
 @dataclass
 class OptimizeResult:
-    """Outcome of a solver run.
+    """Outcome of a solver run, returned by every solver and wrapper.
 
-    ``n_fun_grad``: value + gradient evaluations, ``n_fun``: value-only evaluations,
-    ``n_system``: evaluations of second-order information (the normal equations of
-    Gauss-Newton / Levenberg-Marquardt, or SciPy's Hessian or Hessian-vector products).
-    ``converged`` is True when the run stopped at a minimiser to working precision: on a step
-    or decrease below tolerance (``step_tol``, rounding noise, or an optimiser's own
-    tolerances), at a zero gradient, or with no free parameters. ``message`` says which.
-    ``raw`` holds the backend's own result object for third-party wrappers (``piazzi.scipy``),
-    and is None for the native solvers.
+    Attributes:
+        x (Tensor): the solution, with the shape, dtype and device of ``x0``.
+        fun (Tensor): the objective value at ``x`` (for least squares, the cost, not the
+            residuals).
+        aux (Any): the auxiliary output at ``x`` with ``has_aux=True``, detached, else
+            ``None``.
+        n_iter (int): number of iterations.
+        n_fun_grad (int): value-and-gradient evaluations.
+        n_fun (int): value-only evaluations.
+        n_system (int): evaluations of second-order information: the normal equations of
+            Gauss-Newton / Levenberg-Marquardt, or SciPy's Hessian or Hessian-vector
+            products.
+        converged (bool): whether the run stopped at a minimiser to working precision: on a
+            step or decrease below tolerance (``step_tol``, rounding noise, or an
+            optimiser's own tolerances), at a zero gradient, or with no free parameters.
+        message (str): why the run stopped.
+        raw (Any): the backend's own result object for third-party wrappers
+            (:mod:`piazzi.scipy`), or the optimiser for :class:`torch.optim.Optimizer`
+            methods; ``None`` for the native solvers.
     """
 
     x: torch.Tensor

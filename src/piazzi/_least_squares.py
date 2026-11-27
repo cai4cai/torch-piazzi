@@ -24,36 +24,54 @@ def least_squares_system(
     curvature: str = "irls",
     manifold: Manifold | None = None,
 ) -> Callable:
-    """Turn ``residual_fun(x) -> r`` into a normal-equations function for :func:`gauss_newton`.
+    """Build normal equations from residuals, for :func:`piazzi.gauss_newton`.
 
-    The returned ``system(x)`` gives ``(loss, g, H)`` (plus ``aux`` with ``has_aux``) for the
-    cost ``F = 0.5 * sum(C^2 * rho(z))`` with ``z = (r / C)^2`` and ``C = f_scale``, as in
-    ``scipy.optimize.least_squares``. With the default ``loss="linear"`` this is
-    ``F = 0.5 * ||r||^2``, ``g = J^T r`` and ``H = J^T J``. The Jacobian ``J`` comes from
-    forward-mode autodiff (cheap when there are few parameters). For large or structured
-    problems, write ``system`` by hand and reduce ``J^T J`` without materialising ``J``.
+    The returned ``system(x)`` gives ``(loss, g, H)`` for the cost
+    ``F = 0.5 * sum(C^2 * rho(z))`` with ``z = (r / C)^2`` and ``C = f_scale``, as in
+    :func:`scipy.optimize.least_squares`. With the default ``loss="linear"`` this is
+    ``F = 0.5 * ||r||^2``, ``g = J^T r`` and ``H = J^T J``. For a robust loss the gradient is
+    ``g = J^T (rho'(z) * r)`` and ``H = J^T diag(w) J``, with weights ``w`` set by
+    ``curvature``. The Jacobian ``J`` of shape ``(m, n)`` comes from forward-mode autodiff
+    (:func:`torch.func.jacfwd`), which is cheap when there are few parameters. For large or
+    structured problems, write ``system`` by hand and reduce ``J^T J`` without
+    materialising ``J``.
 
     Args:
-        loss: a name from :data:`piazzi.LOSSES` (``"linear"``, ``"huber"``, ``"soft_l1"``,
-            ``"cauchy"``, ``"arctan"``) or a callable ``rho(z)`` written in PyTorch, applied
-            elementwise; its derivatives come from autograd.
-        f_scale: soft margin ``C`` between inlier and outlier residuals.
-        curvature: curvature model ``H = J^T diag(w) J`` for a robust loss; the gradient
-            is always ``g = J^T (rho'(z) * r)``, so the choice changes the path, not the
-            minimiser.
+        residual_fun (Callable): ``residual_fun(x) -> r``, or ``(r, aux)`` with
+            ``has_aux=True``, where ``r`` is a tensor of residuals of any shape (flattened
+            to ``(m,)``) and ``x`` has the shape of the point passed to ``system``.
+        has_aux (bool, optional): whether ``residual_fun`` also returns an auxiliary output
+            (any tree of tensors), which ``system`` then returns as a fourth element.
+            Default: ``False``
 
-            - ``"irls"`` (default): ``w = rho'(z)``, as in iteratively reweighted least
-              squares. Ceres Solver uses the same weights for losses with
-              ``rho'' <= 0``, which includes every built-in loss.
+    Keyword Args:
+        loss (str or Callable, optional): a name from :data:`piazzi.LOSSES`
+            (``"linear"``, ``"huber"``, ``"soft_l1"``, ``"cauchy"``, ``"arctan"``), or a
+            callable ``rho(z)`` written in PyTorch and applied elementwise, whose derivatives
+            come from autograd. Default: ``"linear"``
+        f_scale (float, optional): soft margin ``C`` between inlier and outlier residuals,
+            in the units of ``r``. Default: ``1.0``
+        curvature (str, optional): the weights ``w`` of ``H = J^T diag(w) J`` for a robust
+            loss. The gradient does not depend on it, so the choice changes the path, not
+            the minimiser. Default: ``"irls"``
+
+            - ``"irls"``: ``w = rho'(z)``, as in iteratively reweighted least squares.
+              Ceres Solver uses the same weights for losses with ``rho'' <= 0``, which
+              includes every built-in loss.
             - ``"scipy"``: ``w = max(rho'(z) + 2 * rho''(z) * z, eps)``, the model of
-              ``scipy.optimize.least_squares``. It is more accurate for inliers, but for
-              outliers the bracket is negative and floored at ``eps``. When most
-              residuals start as outliers, ``H`` is then nearly singular and
-              Levenberg-Marquardt can stall; ``method="gn"`` copes better.
-        manifold: optional :class:`piazzi.Manifold` for ``x``. ``J`` is then the Jacobian of
-            ``delta -> r(manifold.plus(x, delta))`` at ``delta = 0``, so ``g`` and ``H`` are
-            in tangent coordinates (for example 6 columns for :class:`piazzi.SE3`). Pass the
-            same manifold to :func:`gauss_newton`.
+              :func:`scipy.optimize.least_squares`. It is more accurate for inliers, but for
+              outliers the bracket is negative and floored at ``eps``. When most residuals
+              start as outliers, ``H`` is then nearly singular and Levenberg-Marquardt can
+              stall; ``method="gn"`` copes better.
+        manifold (Manifold, optional): keeps ``x`` on a manifold. ``J`` is then the
+            Jacobian of ``delta -> r(manifold.plus(x, delta))`` at ``delta = 0``, so ``g``
+            and ``H`` are in tangent coordinates (for example 6 columns for
+            :class:`piazzi.SE3`). Pass the same manifold to :func:`piazzi.gauss_newton`.
+            Default: ``None``
+
+    Returns:
+        Callable: ``system(x) -> (loss, g, H)``, or ``(loss, g, H, aux)`` with ``has_aux``,
+        with ``g`` of shape ``(n,)`` and ``H`` of shape ``(n, n)``.
     """
     check_loss(loss, f_scale)
     if curvature not in ("irls", "scipy"):
@@ -118,16 +136,51 @@ def least_squares(
     manifold: Manifold | None = None,
     **kwargs,
 ) -> OptimizeResult:
-    """Minimise ``0.5 * sum(f_scale^2 * rho((fun(x) / f_scale)^2))``, like ``scipy.optimize.least_squares``.
+    """Minimise a sum of squared residuals, like :func:`scipy.optimize.least_squares`.
 
-    ``fun(x)`` returns the residuals (``(r, aux)`` with ``has_aux``). This builds the normal
-    equations with :func:`least_squares_system` and solves them with :func:`gauss_newton`
-    (``method="lm"`` or ``"gn"``), using the residuals alone, without the Jacobian, for
-    value-only evaluations. ``loss``, ``f_scale``, ``curvature`` and ``manifold`` are as in
-    :func:`least_squares_system`, and other keyword arguments go to :func:`gauss_newton`.
-    With a ``manifold`` such as :class:`piazzi.SE3`, ``x0`` is a point on it (a 4 x 4 pose)
-    and every iterate stays on it.
-    ``result.fun`` is the cost, not the residuals.
+    Minimises ``0.5 * sum(f_scale^2 * rho((r / f_scale)^2))`` with ``r = fun(x)``. This
+    builds the normal equations with :func:`piazzi.least_squares_system` and solves them
+    with :func:`piazzi.gauss_newton`, using the residuals alone, without the Jacobian, for
+    value-only evaluations. With a ``manifold`` such as :class:`piazzi.SE3`, ``x0`` is a
+    point on it (a ``(4, 4)`` pose) and every iterate stays on it.
+
+    Args:
+        fun (Callable): ``fun(x) -> r``, or ``(r, aux)`` with ``has_aux=True``, where ``r``
+            is a tensor of residuals of any shape and ``x`` has the shape of ``x0``.
+        x0 (Tensor): starting point, of any shape, or a point on ``manifold``.
+
+    Keyword Args:
+        loss (str or Callable, optional): a name from :data:`piazzi.LOSSES` or a callable
+            ``rho(z)``, as in :func:`piazzi.least_squares_system`. Default: ``"linear"``
+        f_scale (float, optional): soft margin between inlier and outlier residuals, in the
+            units of ``r``. Default: ``1.0``
+        method (str, optional): ``"lm"`` (Levenberg-Marquardt) or ``"gn"`` (Gauss-Newton).
+            Default: ``"lm"``
+        has_aux (bool, optional): whether ``fun`` also returns an auxiliary output (any tree
+            of tensors), returned detached in ``result.aux`` and ``info.aux``.
+            Default: ``False``
+        curvature (str, optional): ``"irls"`` or ``"scipy"``, as in
+            :func:`piazzi.least_squares_system`. Default: ``"irls"``
+        manifold (Manifold, optional): keeps ``x`` on a manifold (see
+            :class:`piazzi.Manifold`). Default: ``None``
+        **kwargs: other keyword arguments of :func:`piazzi.gauss_newton`, such as
+            ``max_iter``, ``step_tol``, ``max_step``, ``damping``, ``linear_solver`` or
+            ``callback``.
+
+    Returns:
+        OptimizeResult: as for :func:`piazzi.gauss_newton`. ``result.fun`` is the cost, not
+        the residuals.
+
+    Example::
+
+        >>> t = torch.linspace(0, 4, 40)
+        >>> y = 2.5 * torch.exp(-1.3 * t)
+        >>> y[::10] += 2.0  # outliers
+        >>> def residuals(theta):
+        ...     return theta[0] * torch.exp(-theta[1] * t) - y
+        >>> res = piazzi.least_squares(residuals, torch.tensor([1.0, 0.5]), loss="cauchy", f_scale=0.1)
+        >>> res.x
+        tensor([2.5026, 1.3005])
     """
     system = least_squares_system(fun, has_aux, loss=loss, f_scale=f_scale, curvature=curvature, manifold=manifold)
 
