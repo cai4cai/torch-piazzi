@@ -12,6 +12,7 @@ Solvers
 .. autofunction:: levenberg_marquardt
 .. autofunction:: lbfgs_armijo
 .. autofunction:: least_squares_system
+.. autofunction:: finite_difference
 
 .. py:data:: MINIMIZE_METHODS
    :type: dict[str, Callable[..., OptimizeResult]]
