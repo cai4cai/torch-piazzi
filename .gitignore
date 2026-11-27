@@ -9,3 +9,7 @@ dist/
 .DS_Store
 # Data downloaded by the notebooks
 notebooks/*.bz2
+# Copied from notebooks/ by docs/conf.py at build time
+docs/examples/*.ipynb
+docs/_build/
+docs/jupyter_execute/

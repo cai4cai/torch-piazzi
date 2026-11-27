@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Expectations for anyone changing this repository, human or AI agent. The [README](README.md) describes what the library does; this file describes how to work on it.
+Expectations for anyone changing this repository, human or AI agent. The [README](README.md) and the [documentation](https://cai4cai.github.io/torch-piazzi/) (sources in `docs/`) describe what the library does; this file describes how to work on it.
 
 ## What piazzi is for
 
@@ -11,10 +11,11 @@ Deterministic PyTorch solvers for small nonlinear fitting problems (pose or came
 
 ## Layout
 
-- `src/piazzi/`: the library. Implementation modules are private (`_lbfgs.py`, `_gauss_newton.py`, ...); the public API is what `__init__.py` exports, and the README's tables list it.
+- `src/piazzi/`: the library. Implementation modules are private (`_lbfgs.py`, `_gauss_newton.py`, ...); the public API is what `__init__.py` exports, and `docs/api.rst` lists it.
 - `src/piazzi/scipy/`: optional wrappers around `scipy.optimize`, with the same calling convention as the native solvers. `import piazzi` must not import SciPy.
 - `tests/`: pytest suite. `problems.py` holds test problems shared between files; ported test files say where they come from and carry the original licence.
-- `notebooks/`: executed examples that run locally and in Google Colab.
+- `notebooks/`: executed examples that run locally and in Google Colab. The docs render them from their stored outputs (`docs/conf.py` copies them into `docs/examples/` at build time).
+- `docs/`: the Sphinx documentation (MyST Markdown pages, the user guide in `docs/guide/`, the API reference in `docs/api.rst`), published to GitHub Pages from `main`.
 - `scripts/execute_notebooks.py`: runs the notebooks and fails on any error, warning or stderr output.
 
 ## Before every commit
@@ -25,9 +26,10 @@ uv run ruff check .
 uv run ruff format --check .   # also formats notebooks and README code blocks
 uv run pytest -q               # warnings are errors (filterwarnings = ["error"])
 uv run python scripts/execute_notebooks.py   # when the library or a notebook changed
+uv run --group docs sphinx-build -W --keep-going docs docs/_build/html   # when docs, docstrings or notebooks changed
 ```
 
-CI runs the same checks on Python 3.10 and 3.12, a job with only the required dependencies (the tests of the optional extras must skip, not fail), and the notebooks. All of it must pass before a PR is merged.
+CI runs the same checks on Python 3.10 and 3.12, a job with only the required dependencies (the tests of the optional extras must skip, not fail), the notebooks, and the documentation build (warnings are errors). All of it must pass before a PR is merged.
 
 ## Code
 
@@ -36,8 +38,8 @@ CI runs the same checks on Python 3.10 and 3.12, a job with only the required de
 - **Devices and dtypes.** The objective runs on the device and in the dtype of `x0`; the small normal equations are solved in `solve_dtype` on `solve_device` (float64 on the CPU by default). MPS has no float64, so cast on the side that supports the wider dtype (`transfer` in `_common.py`, `t2n`/`n2t` in `scipy/_convert.py`) and never create a float64 tensor on MPS, even briefly.
 - **Tolerances relative to scale.** Tests such as "is this a descent direction" or "is this curvature pair positive" must be relative to the norms involved, so that an objective multiplied by 1e-9 behaves like the original.
 - **Callbacks** receive an `IterationInfo` (tensors, plus the evaluation counts so far) after every iteration, accepted or not, and stop the run by returning `True`. Every solver and wrapper follows this convention.
-- **Docstrings and the README are part of the change.** A docstring must describe what the code does now: defaults, stopping rules, counts and messages. Update the README tables, numbers and examples in the same commit.
-- Prose (docstrings, comments, README, notebooks) uses British spelling (optimise, minimiser, behaviour); API names follow SciPy and PyTorch (`minimize`, `OptimizeResult`). Lines are at most 120 characters (ruff).
+- **Docstrings and the docs are part of the change.** A docstring must describe what the code does now: defaults, stopping rules, counts and messages. Update the user guide in `docs/guide/` (tables, numbers and examples), `docs/api.rst` for a new public name, and the README's feature list and example, in the same commit. Keep the README short: details belong in the docs.
+- Prose (docstrings, comments, README, docs, notebooks) uses British spelling (optimise, minimiser, behaviour); API names follow SciPy and PyTorch (`minimize`, `OptimizeResult`). Lines are at most 120 characters (ruff).
 
 ## Tests
 
