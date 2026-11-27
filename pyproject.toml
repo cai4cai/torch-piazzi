@@ -23,7 +23,9 @@ scipy = ["scipy>=1.11"]
 sparse = ["torchsparsegradutils>=0.2.7"]
 
 [project.urls]
+Documentation = "https://cai4cai.github.io/torch-piazzi/"
 Repository = "https://github.com/cai4cai/torch-piazzi"
+Issues = "https://github.com/cai4cai/torch-piazzi/issues"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff==0.17.6", "scipy>=1.11", "torchsparsegradutils>=0.2.7"]
@@ -33,6 +35,16 @@ notebooks = [
     "nbclient>=0.10",
     "numpy>=1.24",
     "scipy>=1.11",
+    "torchsparsegradutils>=0.2.7",
+]
+docs = [
+    "furo>=2024.8.6",
+    "myst-nb>=1.1",
+    "myst-parser>=3",
+    "scipy>=1.11",
+    "sphinx>=7.4",
+    "sphinx-copybutton>=0.5.2",
+    "sphinx-design>=0.6",
     "torchsparsegradutils>=0.2.7",
 ]
 
