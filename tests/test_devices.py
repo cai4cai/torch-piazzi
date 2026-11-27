@@ -174,11 +174,7 @@ def test_se3_registration(device, dtype, solver):
             # usually, up to ~550 when float32 rounding differs by an ulp, as across platforms.
             options={"max_iter": 1000, "step_tol": 1e-10 if dtype == torch.float64 else 1e-6},
         )
-    # Near this zero residual, float32 runs reach the pose to float32 precision but may stop on a
-    # rejected step rather than report convergence, depending on the platform's rounding
-    # (issue #19): require convergence in float64 only, and the accuracy in both.
-    if dtype == torch.float64:
-        assert res.converged, res.message
+    assert res.converged, res.message
     assert res.x.device.type == device and res.x.dtype == dtype
     # Translations are ~100 times the rotation entries, so compare them with a relative tolerance.
     torch.testing.assert_close(res.x.cpu().double(), T_true, atol=atol(dtype), rtol=atol(dtype))

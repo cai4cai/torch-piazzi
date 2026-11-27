@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 import torch
 
-from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract, transfer
+from ._common import Callback, IterationInfo, OptimizeResult, below_resolution, check_x0, detach_tree, retract, transfer
 from ._linear_solvers import LinearSolver, cg_solver, dense_solver, diagonal, is_sparse, matvec
 from ._manifolds import Manifold
 
@@ -68,7 +68,11 @@ def gauss_newton(
     of the first trial from the current point): no step can then show measurable progress.
     This is what ends a float32 objective at its minimiser, where rounding noise in the
     gradient keeps steps above ``step_tol``; it plays the role of Ceres Solver's
-    ``function_tolerance``. A trial point with a non-finite
+    ``function_tolerance``. Near a zero residual the loss's rounding noise is absolute and
+    that test cannot see it, so a failed step also counts as converged when the Gauss-Newton
+    step (Levenberg-Marquardt's first trial from the current point) is below the resolution
+    of ``x``, 32 units in the last place of ``max|x|``: that step estimates the distance to
+    the minimiser, and the loss cannot change measurably along it. A trial point with a non-finite
     value is never accepted, and a non-finite value at ``x0`` stops the run at once.
 
     With a ``manifold`` (see :class:`piazzi.Manifold`), ``g`` and ``H`` are in its tangent
@@ -197,7 +201,8 @@ def gauss_newton(
         if method == "gn":
             d = solve(Hc, gc, gn_ridge * (diagonal(Hc).mean().item() if damping == "identity" else 1.0))
             gtd = torch.dot(gc, d).item()
-            if not gtd < 0:  # an indefinite H or an inexact custom solver: fall back to steepest descent
+            newton = gtd < 0
+            if not newton:  # an indefinite H or an inexact custom solver: fall back to steepest descent
                 d = -gc * min(1.0, max_step / gc.abs().max().item())
                 gtd = torch.dot(gc, d).item()
             t = 1.0
@@ -213,6 +218,8 @@ def gauss_newton(
                 n_bt += 1
             if not armijo_ok(f_new.item(), f_val, t, gtd, d):
                 notify(it, f_start, False)
+                if newton and below_resolution(d.abs().max().item(), x):
+                    return result(it + 1, True, "step below the resolution of x")
                 if below_noise(-gtd, f_new.item(), f_val):
                     return result(it + 1, True, "predicted decrease below rounding noise")
                 return result(it + 1, False, "line search failed")
@@ -233,7 +240,7 @@ def gauss_newton(
         if rejections == 0:
             # The prediction of the first trial from this point: rejections raise lam and shrink
             # later predictions, which must not pass for convergence far from a minimiser.
-            pred_first = pred
+            pred_first, step_first = pred, d.abs().max().item()
         x_new = retract(manifold, x, transfer(d, x.device, x.dtype))
         if rejections == 0:  # after an accepted step the trial is usually accepted too
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
@@ -265,6 +272,8 @@ def gauss_newton(
             nu *= 2.0
             rejections += 1
             stop = notify(it, f_start, False)
+            if below_resolution(step_first, x):
+                return result(it + 1, True, "step below the resolution of x")
             if below_noise(pred_first, fn, f_val):
                 return result(it + 1, True, "predicted decrease below rounding noise")
             if rejections >= max_rejections:

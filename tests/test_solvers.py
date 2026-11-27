@@ -225,3 +225,63 @@ def test_least_squares_aux_may_hold_non_tensors(exp_data):
     res = piazzi.least_squares(fun, torch.tensor([1.0, 0.5], dtype=torch.float64), has_aux=True)
     assert res.aux["name"] == "fit" and res.aux["n"] == 3 and res.aux["nested"][1] is None
     assert torch.equal(res.aux["worst"], exp_residuals(res.x, t, y).abs().max())
+
+
+# --- Issue #19: float32 runs that reach a minimiser must report convergence ----------------
+
+FLOAT32_ROSEN_STARTS = {
+    # Found among random starts in [-2, 2]: each ended "line search failed twice in a row" at a
+    # minimiser accurate to float32 precision. The values are exact float32 numbers.
+    "2d": [-1.9106969833374023, -1.3245642185211182],
+    "4d": [0.07636308670043945, 0.463409423828125, 1.240753173828125, 1.9203882217407227],
+    "10d-local": [  # the local minimum near (-1, 1, ..., 1), f ~ 3.99
+        -0.701124906539917,
+        1.5627131462097168,
+        -0.3598811626434326,
+        0.7786250114440918,
+        0.3552436828613281,
+        0.8509364128112793,
+        -0.6796550750732422,
+        0.9751427173614502,
+        -1.396941900253296,
+        0.4517099857330322,
+    ],
+}
+
+
+@pytest.mark.parametrize("start", FLOAT32_ROSEN_STARTS, ids=list(FLOAT32_ROSEN_STARTS))
+def test_lbfgs_armijo_float32_converges_at_the_minimiser(start):
+    x0 = torch.tensor(FLOAT32_ROSEN_STARTS[start])
+    res = piazzi.lbfgs_armijo(rosen_nd, x0, max_iter=3000)
+    ref = piazzi.lbfgs_armijo(rosen_nd, x0.double(), max_iter=3000, step_tol=1e-12)
+    assert res.converged, res.message
+    # A minimiser is determined to about sqrt(eps) of the dtype.
+    assert torch.allclose(res.x.double(), ref.x, atol=3 * torch.finfo(torch.float32).eps ** 0.5)
+
+
+def registration(seed, dtype):
+    """Points ~100 from the origin; data perturbed by +-1e-5 (about an ulp) to mimic how float32
+    rounding differs across platforms. The residual is zero up to that rounding."""
+    g = torch.Generator().manual_seed(0)
+    P = 5 * torch.randn(30, 3, generator=g, dtype=torch.float64) + torch.tensor([100.0, 80.0, -60.0])
+    T_true = piazzi.se3_exp(torch.tensor([3.0, -2.0, 5.0, 0.9, -1.2, 0.6], dtype=torch.float64))
+    P = P.float() + 1e-5 * torch.randint(-1, 2, P.shape, generator=torch.Generator().manual_seed(seed))
+    Q = (P.double() @ T_true[:3, :3].T + T_true[:3, 3]).float()
+    P, Q = P.to(dtype), Q.to(dtype)
+    return (lambda T: (P @ T[:3, :3].T + T[:3, 3] - Q).reshape(-1)), piazzi.SE3(pivot=P.mean(0)), T_true
+
+
+@pytest.mark.parametrize("seed", range(8))
+@pytest.mark.parametrize("solver", ["lm", "gn", "lbfgs"])
+def test_float32_registration_converges_near_a_zero_residual(solver, seed):
+    """Near a zero residual the loss's rounding noise is absolute: the relative noise test cannot
+    see it, and LM rejected (L-BFGS failed) every step at the minimiser before #19."""
+    residuals, manifold, T_true = registration(seed, torch.float32)
+    T0 = torch.eye(4)
+    if solver == "lbfgs":
+        options = {"max_iter": 2000, "step_tol": 1e-6}
+        res = piazzi.minimize(lambda T: 0.5 * residuals(T).square().sum(), T0, manifold=manifold, options=options)
+    else:
+        res = piazzi.least_squares(residuals, T0, manifold=manifold, method=solver, max_step=1e3)
+    assert res.converged, res.message
+    torch.testing.assert_close(res.x.double(), T_true, atol=1e-3, rtol=1e-3)

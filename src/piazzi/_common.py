@@ -100,6 +100,24 @@ def transfer(t: torch.Tensor, device, dtype: torch.dtype) -> torch.Tensor:
     return t.to(device).to(dtype)
 
 
+# How many units in the last place of max|x| a step must exceed to count as moving x. 32 was
+# chosen on float32 problems (Rosenbrock from random starts, SE(3) registration with data
+# perturbed by an ulp, robust fits): it stops every run that reached the minimiser, and never
+# one that had not; float64 runs are unaffected.
+RESOLUTION_ULPS = 32
+
+
+def below_resolution(step: float, x: torch.Tensor) -> bool:
+    """Whether a step of max-norm ``step`` is too small to move ``x`` measurably in its dtype.
+
+    The resolution is ``RESOLUTION_ULPS`` units in the last place of ``max|x|``. A Newton-like
+    step (Gauss-Newton, Levenberg-Marquardt's first trial, an L-BFGS step from its memory)
+    estimates the distance to the minimiser, so when it is this small, ``x`` is a minimiser to
+    working precision, and any change in the loss along it is rounding noise.
+    """
+    return step <= RESOLUTION_ULPS * torch.finfo(x.dtype).eps * x.abs().max().item()
+
+
 def retract(manifold, x: torch.Tensor, d: torch.Tensor) -> torch.Tensor:
     """``x + d`` on a flat point, or ``manifold.plus(x, d)`` when a manifold is given."""
     return x + d if manifold is None else manifold.plus(x, d)
