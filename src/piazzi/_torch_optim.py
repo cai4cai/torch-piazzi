@@ -52,9 +52,12 @@ def torch_optimizer(
         for entry in cache:
             if torch.equal(entry[0], xv):
                 return entry
+        # fun gets a copy: the optimiser updates param in place, which would change any aux
+        # (or anything else fun keeps) that is a view of x.
+        xg = xv.clone().requires_grad_(True)
         with torch.enable_grad():
-            loss, aux = split_aux(fun(param), has_aux)
-            (grad,) = torch.autograd.grad(loss, param)
+            loss, aux = split_aux(fun(xg), has_aux)
+            (grad,) = torch.autograd.grad(loss, xg)
         entry = (xv.clone(), loss.detach(), grad.detach(), detach_tree(aux))
         cache.append(entry)
         counts["fg"] += 1
@@ -101,6 +104,8 @@ def torch_optimizer(
             with torch.no_grad():
                 param.copy_(x_old)
             f, aux = f_old, aux_old
+            if callback is not None:
+                callback(IterationInfo(it, x_old, f, f, aux, False, n_fun_grad=counts["fg"]))
             return result(it + 1, False, "non-finite value")
         step = (param.detach() - x_old).abs().max().item()
         info = IterationInfo(it, param.detach().clone(), f, f_old, aux, True, n_fun_grad=counts["fg"])

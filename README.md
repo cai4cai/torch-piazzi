@@ -10,7 +10,7 @@
 
 | Function | Needs | Notes |
 |---|---|---|
-| `lbfgs_armijo(fun, x0)` | value + gradient (autograd) | L-BFGS with Armijo backtracking. It usually costs one evaluation per iteration, and the line search uses value-only evaluations. |
+| `lbfgs_armijo(fun, x0)` | value + gradient (autograd) | L-BFGS with Armijo backtracking. It usually costs one evaluation per iteration. Each trial point is evaluated with its autograd graph, and the backward pass runs only at the accepted point, so a rejected trial costs a forward pass. |
 | `minimize(fun, x0, method="lbfgs_armijo", options=...)` | value + gradient (autograd) | Like `scipy.optimize.minimize`: picks a scalar minimiser by name (`piazzi.MINIMIZE_METHODS`; currently only `lbfgs_armijo`) and passes it `options`. `method` can also be a `torch.optim` optimiser class (see below). |
 | `gauss_newton(system, x0, method="gn")` | `(loss, g, H)` | Gauss-Newton with Armijo backtracking. |
 | `gauss_newton(system, x0, method="lm")` / `levenberg_marquardt` | `(loss, g, H)` | Levenberg-Marquardt with Nielsen's damping update. |

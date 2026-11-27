@@ -53,6 +53,11 @@ def minimize(
     """
     if isinstance(method, type) and issubclass(method, torch.optim.Optimizer):
         return torch_optimizer(fun, x0, method, has_aux=has_aux, callback=callback, **(options or {}))
+    if not isinstance(method, str):
+        raise TypeError(
+            f"method must be a name from {sorted(MINIMIZE_METHODS)} or a torch.optim.Optimizer subclass"
+            f" (the class, not an instance), got {method!r}"
+        )
     key = method.lower()
     if key not in MINIMIZE_METHODS:
         raise ValueError(f"method must be one of {sorted(MINIMIZE_METHODS)}, got {method!r}")

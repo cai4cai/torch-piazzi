@@ -52,7 +52,9 @@ def lbfgs_armijo(
         value_fun: optional cheaper ``value_fun(x) -> loss`` for the backtracking
             evaluations of the line search (run under ``torch.no_grad``). The gradient at an
             accepted backtracked point then needs one more call to ``fun``. By default the
-            backtracking evaluates ``fun`` itself, with the deferred backward pass.
+            backtracking evaluates ``fun`` itself, recording its graph for the deferred
+            backward pass. If ``fun`` is much cheaper without a graph, pass
+            ``value_fun=fun`` to backtrack under ``torch.no_grad`` instead.
         lr: initial step length along the L-BFGS direction.
         callback: called with an :class:`IterationInfo` after every iteration; returning
             True stops the run.
