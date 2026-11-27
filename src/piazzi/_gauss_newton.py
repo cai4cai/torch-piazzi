@@ -2,117 +2,14 @@
 
 from __future__ import annotations
 
-import warnings
+import math
 from collections.abc import Callable
 
 import torch
 
 from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree
-from .losses import Loss, check_loss, rho_and_derivatives, robust_cost
 
-__all__ = ["gauss_newton", "least_squares", "least_squares_system", "levenberg_marquardt"]
-
-
-def least_squares_system(
-    residual_fun: Callable,
-    has_aux: bool = False,
-    *,
-    loss: Loss = "linear",
-    f_scale: float = 1.0,
-    curvature: str = "irls",
-) -> Callable:
-    """Turn ``residual_fun(x) -> r`` into a normal-equations function for :func:`gauss_newton`.
-
-    The returned ``system(x)`` gives ``(loss, g, H)`` (plus ``aux`` with ``has_aux``) for the
-    cost ``F = 0.5 * sum(C^2 * rho(z))`` with ``z = (r / C)^2`` and ``C = f_scale``, as in
-    ``scipy.optimize.least_squares``. With the default ``loss="linear"`` this is
-    ``F = 0.5 * ||r||^2``, ``g = J^T r`` and ``H = J^T J``. The Jacobian ``J`` comes from
-    forward-mode autodiff (cheap when there are few parameters). For large or structured
-    problems, write ``system`` by hand and reduce ``J^T J`` without materialising ``J``.
-
-    Args:
-        loss: a name from :data:`piazzi.LOSSES` (``"linear"``, ``"huber"``, ``"soft_l1"``,
-            ``"cauchy"``, ``"arctan"``) or a callable ``rho(z)`` written in PyTorch, applied
-            elementwise; its derivatives come from autograd.
-        f_scale: soft margin ``C`` between inlier and outlier residuals.
-        curvature: curvature model ``H = J^T diag(w) J`` for a robust loss; the gradient
-            is always ``g = J^T (rho'(z) * r)``, so the choice changes the path, not the
-            minimiser.
-
-            - ``"irls"`` (default): ``w = rho'(z)``, as in iteratively reweighted least
-              squares. Ceres Solver uses the same weights for losses with
-              ``rho'' <= 0``, which includes every built-in loss.
-            - ``"scipy"``: ``w = max(rho'(z) + 2 * rho''(z) * z, eps)``, the model of
-              ``scipy.optimize.least_squares``. It is more accurate for inliers, but for
-              outliers the bracket is negative and floored at ``eps``. When most
-              residuals start as outliers, ``H`` is then nearly singular and
-              Levenberg-Marquardt can stall; ``method="gn"`` copes better.
-    """
-    check_loss(loss, f_scale)
-    if curvature not in ("irls", "scipy"):
-        raise ValueError(f"curvature must be 'irls' or 'scipy', got {curvature!r}")
-    robust = loss != "linear"
-
-    def system(x):
-        shape = x.shape
-
-        def flat(xf):
-            out = residual_fun(xf.reshape(shape))
-            if has_aux:
-                r, aux = out
-                return r.reshape(-1), (r.reshape(-1), aux)
-            return out.reshape(-1), (out.reshape(-1),)
-
-        with warnings.catch_warnings():
-            # The first forward-mode AD call makes torch load its JVP decompositions, which
-            # call the deprecated torch.jit.script internally in torch 2.15 and earlier. Fixed
-            # upstream by https://github.com/pytorch/pytorch/pull/203621 (landed 2026-11-09,
-            # after 2.15.0); drop this filter once the minimum torch version includes it.
-            warnings.filterwarnings("ignore", r"`torch\.jit\.script` is deprecated", FutureWarning, r"torch\.jit")
-            J, extra = torch.func.jacfwd(flat, has_aux=True)(x.reshape(-1))
-        r, aux = extra[0], (extra[1] if has_aux else None)
-        if robust:
-            z = (r / f_scale) ** 2
-            rho, d1, d2 = rho_and_derivatives(z, loss)
-            loss_val = 0.5 * f_scale**2 * rho.sum()
-            w = d1 if curvature == "irls" else (d1 + 2 * d2 * z).clamp(min=torch.finfo(r.dtype).eps)
-            g, H = J.T @ (d1 * r), J.T @ (w[:, None] * J)
-        else:
-            loss_val = 0.5 * torch.dot(r, r)
-            g, H = J.T @ r, J.T @ J
-        return (loss_val, g, H, aux) if has_aux else (loss_val, g, H)
-
-    return system
-
-
-def least_squares(
-    fun: Callable,
-    x0: torch.Tensor,
-    *,
-    loss: Loss = "linear",
-    f_scale: float = 1.0,
-    method: str = "lm",
-    has_aux: bool = False,
-    curvature: str = "irls",
-    **kwargs,
-) -> OptimizeResult:
-    """Minimise ``0.5 * sum(f_scale^2 * rho((fun(x) / f_scale)^2))``, like ``scipy.optimize.least_squares``.
-
-    ``fun(x)`` returns the residuals (``(r, aux)`` with ``has_aux``). This builds the normal
-    equations with :func:`least_squares_system` and solves them with :func:`gauss_newton`
-    (``method="lm"`` or ``"gn"``), using the residuals alone, without the Jacobian, for
-    value-only evaluations. ``loss``, ``f_scale`` and ``curvature`` are as in
-    :func:`least_squares_system`, and other keyword arguments go to :func:`gauss_newton`.
-    ``result.fun`` is the cost, not the residuals.
-    """
-    system = least_squares_system(fun, has_aux, loss=loss, f_scale=f_scale, curvature=curvature)
-
-    def value_fun(x):
-        out = fun(x)
-        return robust_cost((out[0] if has_aux else out).reshape(-1), loss, f_scale)
-
-    kwargs.setdefault("value_fun", value_fun)
-    return gauss_newton(system, x0, method=method, has_aux=has_aux, **kwargs)
+__all__ = ["gauss_newton", "levenberg_marquardt"]
 
 
 def gauss_newton(
@@ -152,7 +49,9 @@ def gauss_newton(
       (it is usually accepted too); after a rejection the trial is value-only. Stops
       after ``max_rejections`` rejections in a row.
 
-    Both stop once a step is below ``step_tol`` (max-norm).
+    Both stop once a step is below ``step_tol`` (max-norm), or when the gradient is exactly
+    zero (a stationary point, where ``H`` may be singular). A trial point with a non-finite
+    value is never accepted, and a non-finite value at ``x0`` stops the run at once.
 
     Args:
         value_fun: optional cheaper ``value_fun(x) -> loss`` for value-only evaluations.
@@ -185,6 +84,16 @@ def gauss_newton(
         # Move first, then cast: casting on the source device fails where it lacks float64 (MPS).
         return g.to(solve_device).to(solve_dtype), H.to(solve_device).to(solve_dtype)
 
+    def at_noise_floor(f_new, f_val, step):
+        # A step below step_tol whose value went up by no more than rounding noise: we are at a
+        # minimiser to working precision, so the step counts as accepted (and converged).
+        noise = 8 * torch.finfo(f.dtype).eps * abs(f_val)
+        return step < step_tol and f_new <= f_val + noise
+
+    def armijo_ok(fn, f_val, t, gtd, d):
+        # A non-finite trial value (NaN, or -inf, which would pass `<=`) is never accepted.
+        return math.isfinite(fn) and (fn <= f_val + c1 * t * gtd or at_noise_floor(fn, f_val, t * d.abs().max().item()))
+
     def solve(Hc, gc, lam):
         A = Hc + lam * torch.eye(Hc.shape[0], dtype=Hc.dtype, device=Hc.device)
         d = torch.linalg.solve(A, -gc)
@@ -206,11 +115,15 @@ def gauss_newton(
         return callback is not None and bool(callback(IterationInfo(it, x.reshape(shape), f, f_start, aux, accepted)))
 
     f, aux, g, H = eval_sys(x)
+    if not torch.isfinite(f):
+        return result(0, False, "objective is not finite at x0")
     gc, Hc = host(g, H)
     lam = tau * Hc.diagonal().max().item()
     nu, rejections, have_sys = 2.0, 0, True
     for it in range(max_iter):
         f_val, f_start = f.item(), f
+        if gc.abs().max().item() == 0:  # stationary, and H may be singular (e.g. J = 0)
+            return result(it, True, "gradient is zero")
         if method == "gn":
             d = solve(Hc, gc, gn_ridge * Hc.diagonal().mean().item())
             gtd = torch.dot(gc, d).item()
@@ -219,12 +132,13 @@ def gauss_newton(
             x_new = x + dx
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             n_bt = 0
-            while f_new.item() > f_val + c1 * t * gtd and n_bt < max_backtracks:
+
+            while not armijo_ok(f_new.item(), f_val, t, gtd, d) and n_bt < max_backtracks:
                 t *= 0.5
                 x_new = x + t * dx
                 f_new, g_new = eval_value(x_new), None
                 n_bt += 1
-            if f_new.item() > f_val + c1 * t * gtd:
+            if not armijo_ok(f_new.item(), f_val, t, gtd, d):
                 notify(it, f_start, False)
                 return result(it + 1, False, "line search failed")
             if g_new is None:
@@ -248,7 +162,13 @@ def gauss_newton(
         else:
             f_new, have_sys = eval_value(x_new), False
         rho = (f_val - f_new.item()) / max(pred, 1e-20)
-        if rho > 0:
+        # At a minimiser the model predicts no decrease (pred = 0), so the gain ratio is 0 and
+        # would reject the zero step forever; accept it when the value did not go up. Likewise
+        # a tiny step whose decrease is lost to rounding (pred ~ 1e-32) is accepted.
+        # A non-finite trial value is never accepted: -inf would give rho = +inf.
+        fn = f_new.item()
+        accept = rho > 0 or (pred <= 0 and fn <= f_val) or at_noise_floor(fn, f_val, d.abs().max().item())
+        if math.isfinite(fn) and accept:
             if not have_sys:
                 f_new, aux_new, g_new, H_new = eval_sys(x_new)
             lam *= max(1.0 / 3.0, 1.0 - (2.0 * rho - 1.0) ** 3)

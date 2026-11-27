@@ -16,6 +16,10 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Mathematics",
 ]
 
+[project.optional-dependencies]
+# Third-party backends, each importable as a piazzi subpackage (e.g. piazzi.scipy).
+scipy = ["scipy>=1.10"]
+
 [project.urls]
 Repository = "https://github.com/cai4cai/torch-piazzi"
 

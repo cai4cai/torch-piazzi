@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -32,7 +34,10 @@ class OptimizeResult:
 
     ``n_fun_grad``: value + gradient evaluations, ``n_fun``: value-only evaluations,
     ``n_system``: normal-equation evaluations (Gauss-Newton / Levenberg-Marquardt).
-    ``converged`` is True when the run stopped on ``step_tol``; ``message`` says why it stopped.
+    ``converged`` is True when the run stopped on ``step_tol`` or at a zero gradient;
+    ``message`` says why it stopped.
+    ``raw`` holds the backend's own result object for third-party wrappers (``piazzi.scipy``),
+    and is None for the native solvers.
     """
 
     x: torch.Tensor
@@ -44,6 +49,7 @@ class OptimizeResult:
     n_system: int = 0
     converged: bool = False
     message: str = ""
+    raw: Any = None
 
 
 Callback = Callable[[IterationInfo], "bool | None"]
@@ -72,3 +78,17 @@ def check_x0(x0: torch.Tensor) -> tuple[torch.Tensor, torch.Size]:
     if not isinstance(x0, torch.Tensor) or not x0.is_floating_point():
         raise TypeError("x0 must be a floating-point tensor")
     return x0.detach().reshape(-1).clone(), x0.shape
+
+
+@contextlib.contextmanager
+def quiet_jvp_warnings():
+    """Silence a spurious deprecation warning on the first forward-mode AD call.
+
+    The first forward-mode AD call makes torch load its JVP decompositions, which call the
+    deprecated torch.jit.script internally in torch 2.15 and earlier. Fixed upstream by
+    https://github.com/pytorch/pytorch/pull/203621 (landed 2026-11-09, after 2.15.0); drop
+    this filter once the minimum torch version includes it.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", r"`torch\.jit\.script` is deprecated", FutureWarning, r"torch\.jit")
+        yield
