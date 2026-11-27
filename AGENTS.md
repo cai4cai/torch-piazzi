@@ -4,7 +4,7 @@ Expectations for anyone changing this repository, human or AI agent. The [README
 
 ## What piazzi is for
 
-Deterministic PyTorch solvers for small nonlinear fitting problems (pose or camera registration, curve fitting, bundle adjustment) where every objective evaluation is expensive. Two consequences shape most decisions:
+Deterministic PyTorch solvers for nonlinear fitting problems (pose or camera registration, curve fitting, bundle adjustment) where every objective evaluation is expensive. Two consequences shape most decisions:
 
 - **Every evaluation counts.** Never evaluate the objective, its gradient or the normal equations twice at the same point, never compute a gradient that will be thrown away, and count every evaluation by kind (`n_fun_grad`, `n_fun`, `n_system`) in both `OptimizeResult` and `IterationInfo`. A change that adds evaluations needs a reason in its commit message.
 - **Results must be trustworthy.** `converged=True` means a minimiser was reached to working precision, in float32 as well as float64; `message` says why the run stopped. A solver must never accept a trial point with a non-finite value, step uphill, or report convergence at a point it has not checked.
@@ -35,7 +35,7 @@ CI runs the same checks on Python 3.10 and 3.12, a job with only the required de
 
 - **Warnings are bugs.** Fix the cause rather than silencing it. If a warning comes from a dependency, filter it as narrowly as possible (message, category and module), next to a comment linking the upstream issue and saying when to remove the filter, as `quiet_jvp_warnings` in `_common.py` does.
 - **No aliasing.** Clone `x0` and anything handed back to the user or to a callback; give user functions their own copy of the point; copy tensors a user's function returns if the solver keeps them across calls (a `system` may reuse its output buffers). Detach `aux` with `detach_tree`.
-- **Devices and dtypes.** The objective runs on the device and in the dtype of `x0`; the small normal equations are solved in `solve_dtype` on `solve_device` (float64 on the CPU by default). MPS has no float64, so cast on the side that supports the wider dtype (`transfer` in `_common.py`, `t2n`/`n2t` in `scipy/_convert.py`) and never create a float64 tensor on MPS, even briefly.
+- **Devices and dtypes.** The objective runs on the device and in the dtype of `x0`; the normal equations are solved in `solve_dtype` on `solve_device` (float64 on the CPU by default). MPS has no float64, so cast on the side that supports the wider dtype (`transfer` in `_common.py`, `t2n`/`n2t` in `scipy/_convert.py`) and never create a float64 tensor on MPS, even briefly.
 - **Tolerances relative to scale.** Tests such as "is this a descent direction" or "is this curvature pair positive" must be relative to the norms involved, so that an objective multiplied by 1e-9 behaves like the original.
 - **Callbacks** receive an `IterationInfo` (tensors, plus the evaluation counts so far) after every iteration, accepted or not, and stop the run by returning `True`. Every solver and wrapper follows this convention.
 - **Docstrings and the docs are part of the change.** A docstring must describe what the code does now: defaults, stopping rules, counts and messages. Update the user guide in `docs/guide/` (tables, numbers and examples), `docs/api.rst` for a new public name, and the README's feature list and example, in the same commit. Keep the README short: details belong in the docs.

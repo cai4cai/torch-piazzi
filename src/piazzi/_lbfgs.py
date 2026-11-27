@@ -31,7 +31,7 @@ def lbfgs_armijo(
 ) -> OptimizeResult:
     """Minimise ``fun`` with L-BFGS and an Armijo backtracking line search.
 
-    Built for expensive, deterministic objectives with few parameters, where every
+    Built for expensive, deterministic objectives, where every
     evaluation counts. Each iteration first tries the full step (``lr`` times the L-BFGS
     direction, capped so that no coordinate moves more than ``max_step``). If the
     sufficient-decrease condition fails, the step is shrunk by quadratic interpolation.

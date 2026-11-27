@@ -3,15 +3,13 @@ API reference
 
 .. currentmodule:: piazzi
 
-Solvers
--------
+High-level interfaces
+---------------------
+
+The SciPy-style entry points: residuals or a scalar objective, with the method chosen by name.
 
 .. autofunction:: least_squares
 .. autofunction:: minimize
-.. autofunction:: gauss_newton
-.. autofunction:: levenberg_marquardt
-.. autofunction:: lbfgs_armijo
-.. autofunction:: least_squares_system
 
 .. py:data:: MINIMIZE_METHODS
    :type: dict[str, Callable[..., OptimizeResult]]
@@ -20,6 +18,16 @@ Solvers
    To add one, register a callable ``method(fun, x0, *, has_aux, callback, **options)``
    under a lower-case name. :func:`minimize` passes ``manifold=`` only when one is given, so a
    method that doesn't support manifolds need not accept it.
+
+Method-specific solvers
+-----------------------
+
+The algorithms behind the high-level interfaces, with every setting exposed.
+
+.. autofunction:: gauss_newton
+.. autofunction:: levenberg_marquardt
+.. autofunction:: lbfgs_armijo
+.. autofunction:: least_squares_system
 
 Results and callbacks
 ---------------------

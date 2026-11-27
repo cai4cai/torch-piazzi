@@ -1,6 +1,6 @@
 # Devices and precision
 
-The objective runs on the device and in the dtype of `x0`. Only the small `n x n` normal equations of {func}`~piazzi.gauss_newton` (and {func}`~piazzi.least_squares`) move: they are solved in `solve_dtype` on `solve_device`, float64 on the CPU by default. That split lets the expensive part (rendering, residuals and Jacobians) run in float32 on a GPU, while the solve keeps float64 accuracy and stays cheap for small `n`.
+The objective runs on the device and in the dtype of `x0`. Only the `n x n` normal equations of {func}`~piazzi.gauss_newton` (and {func}`~piazzi.least_squares`) move: they are solved in `solve_dtype` on `solve_device`, float64 on the CPU by default. That split lets the expensive part (rendering, residuals and Jacobians) run in float32 on a GPU, while the solve keeps float64 accuracy, which is cheap when `n` is small.
 
 ```python
 x0 = x0.to("cuda", torch.float32)  # or "mps"
