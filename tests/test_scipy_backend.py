@@ -88,3 +88,70 @@ def test_lm_method_and_counts(outlier_data):
     res = pzs.least_squares(residuals(t, y), torch.tensor([1.0, 0.5], dtype=torch.float64), method="lm")
     assert torch.allclose(res.x, THETA, atol=1e-6)
     assert res.n_iter >= 1 and res.n_fun >= 1
+
+
+@needs_scipy
+def test_t2n_returns_owned_copy():
+    x = torch.arange(3, dtype=torch.float64)
+    a = pzs.t2n(x)
+    a[0] = 42.0
+    assert x[0] == 0.0
+
+
+@needs_scipy
+def test_robust_loss_does_not_overwrite_callable_jacobian(outlier_data):
+    """A reused PyTorch Jacobian must survive the solve.
+
+    SciPy's robust-loss scaling is written to work in place; SciPy 1.18 copies first, so this
+    guards the owned-copy contract of t2n rather than reproducing a current failure.
+    """
+    t, y = outlier_data
+    cached = torch.stack([torch.ones_like(t), t], dim=1)  # Jacobian of the linear model a + b t
+    before = cached.clone()
+    res = pzs.least_squares(
+        lambda th: th[0] + th[1] * t - y,
+        torch.zeros(2, dtype=torch.float64),
+        jac=lambda th: cached,
+        loss="cauchy",
+        f_scale=0.1,
+    )
+    assert torch.equal(cached, before) and res.converged
+
+
+@needs_scipy
+def test_rejects_complex_step(outlier_data):
+    t, y = outlier_data
+    with pytest.raises(ValueError, match="complex step"):
+        pzs.least_squares(residuals(t, y), torch.ones(2, dtype=torch.float64), jac="cs")
+
+
+@needs_scipy
+def test_args_and_kwargs_are_bound(outlier_data):
+    t, y = outlier_data
+    y = 2.5 * torch.exp(-1.3 * t)
+
+    def fun(th, t, y, scale=1.0):
+        return scale * (th[0] * torch.exp(-th[1] * t) - y)
+
+    def jac(th, t, y, scale=1.0):
+        e = torch.exp(-th[1] * t)
+        return scale * torch.stack([e, -th[0] * t * e], dim=1)
+
+    for j in ("autodiff", jac):
+        res = pzs.least_squares(
+            fun, torch.tensor([1.0, 0.5], dtype=torch.float64), jac=j, args=(t, y), kwargs={"scale": 2.0}
+        )
+        assert torch.allclose(res.x, THETA, atol=1e-6)
+
+
+@needs_scipy
+def test_callable_loss_runs_in_x0_dtype(outlier_data):
+    t, y = (v.float() for v in outlier_data)
+    seen = set()
+
+    def loss(z):
+        seen.add(z.dtype)
+        return torch.log1p(z)
+
+    pzs.least_squares(residuals(t, y), torch.tensor([1.0, 0.5]), loss=loss, f_scale=0.1)
+    assert seen == {torch.float32}

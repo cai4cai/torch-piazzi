@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 import torch
@@ -90,8 +91,8 @@ def gauss_newton(
         return step < step_tol and f_new <= f_val + noise
 
     def armijo_ok(fn, f_val, t, gtd, d):
-        # `<=` (rather than `not >`) so that a NaN trial value counts as insufficient decrease.
-        return fn <= f_val + c1 * t * gtd or at_noise_floor(fn, f_val, t * d.abs().max().item())
+        # A non-finite trial value (NaN, or -inf, which would pass `<=`) is never accepted.
+        return math.isfinite(fn) and (fn <= f_val + c1 * t * gtd or at_noise_floor(fn, f_val, t * d.abs().max().item()))
 
     def solve(Hc, gc, lam):
         A = Hc + lam * torch.eye(Hc.shape[0], dtype=Hc.dtype, device=Hc.device)
@@ -164,8 +165,10 @@ def gauss_newton(
         # At a minimiser the model predicts no decrease (pred = 0), so the gain ratio is 0 and
         # would reject the zero step forever; accept it when the value did not go up. Likewise
         # a tiny step whose decrease is lost to rounding (pred ~ 1e-32) is accepted.
+        # A non-finite trial value is never accepted: -inf would give rho = +inf.
         fn = f_new.item()
-        if rho > 0 or (pred <= 0 and fn <= f_val) or at_noise_floor(fn, f_val, d.abs().max().item()):
+        accept = rho > 0 or (pred <= 0 and fn <= f_val) or at_noise_floor(fn, f_val, d.abs().max().item())
+        if math.isfinite(fn) and accept:
             if not have_sys:
                 f_new, aux_new, g_new, H_new = eval_sys(x_new)
             lam *= max(1.0 / 3.0, 1.0 - (2.0 * rho - 1.0) ** 3)

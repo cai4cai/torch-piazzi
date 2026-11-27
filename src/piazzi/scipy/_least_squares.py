@@ -20,6 +20,15 @@ def _to_scipy(v):
     return t2n(v).reshape(-1) if isinstance(v, torch.Tensor) else v
 
 
+def _bind(f, args, kwargs):
+    """``f`` with SciPy-style extra arguments appended: ``f(*a, *args, **kwargs)``."""
+
+    def bound(*a):
+        return f(*a, *args, **kwargs)
+
+    return bound
+
+
 def least_squares(
     fun: Callable,
     x0: torch.Tensor,
@@ -41,13 +50,14 @@ def least_squares(
     Args:
         jac: ``"autodiff"`` (default) for ``torch.func.jacfwd``; a callable
             ``jac(x) -> J`` that returns a tensor of shape (m, n); or one of SciPy's
-            finite-difference schemes (``"2-point"``, ``"3-point"``). Finite differences
+            finite-difference schemes (``"2-point"``, ``"3-point"``; not ``"cs"``). Finite differences
             need a float64 ``x0``: in float32 their steps are lost to rounding.
         loss: a SciPy loss name, or a callable ``rho(z)`` written in PyTorch as for
             :func:`piazzi.least_squares`. The wrapper gives SciPy its derivatives from
             autograd.
         f_scale: soft margin between inlier and outlier residuals.
         bounds: as in SciPy; tensors in a ``(lb, ub)`` pair are converted (and flattened).
+        args, kwargs: as in SciPy, extra arguments for ``fun`` and a callable ``jac``.
         **kwargs: passed to ``scipy.optimize.least_squares`` (``method``, ``ftol``,
             ``xtol``, ``gtol``, ``max_nfev``, ``x_scale``, ``callback``, ...). Tensors given
             as ``x_scale`` or ``diff_step`` are converted. A ``callback`` receives SciPy's
@@ -62,6 +72,14 @@ def least_squares(
     """
     check_loss(loss, f_scale)
     like, shape = check_x0(x0)
+    if jac == "cs":
+        raise ValueError("jac='cs' (complex step) is not supported: use 'autodiff' or a finite-difference scheme")
+    # SciPy's extra arguments are bound to the PyTorch functions, which the adapters call with x only.
+    args, fun_kwargs = tuple(kwargs.pop("args", ())), dict(kwargs.pop("kwargs", None) or {})
+    if args or fun_kwargs:
+        fun = _bind(fun, args, fun_kwargs)
+        if callable(jac):
+            jac = _bind(jac, args, fun_kwargs)
 
     def residuals(xn):
         with torch.no_grad():
@@ -88,7 +106,8 @@ def least_squares(
     if callable(loss):
 
         def scipy_loss(z):
-            return np.stack([t2n(v) for v in rho_and_derivatives(torch.from_numpy(z), loss)])
+            # Evaluated in the dtype and on the device of x0, as with piazzi.least_squares.
+            return np.stack([t2n(v) for v in rho_and_derivatives(n2t(z, like), loss)])
 
     else:
         scipy_loss = loss

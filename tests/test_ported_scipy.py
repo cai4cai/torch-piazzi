@@ -265,3 +265,37 @@ def test_minimize_matches_scipy(problem, method):
     assert torch.allclose(ours.x, theirs.x, atol=1e-4)
     # L-BFGS-B stops on its relative-decrease test (ftol), so near-zero minima differ by ~1e-12.
     assert ours.fun.item() == pytest.approx(theirs.fun.item(), rel=1e-8, abs=1e-10)
+
+
+# -inf trial values (passing `<=` against any finite bound) must be rejected too.
+
+
+@pytest.mark.parametrize("method", ["lm", "gn"])
+def test_gauss_newton_rejects_minus_inf_trial(method):
+    seen = []
+
+    def system(x):  # 0.5 (x - 1)^2, but -inf beyond x = 1.5
+        seen.append(x.item())
+        loss = 0.5 * ((x - 1) ** 2).sum() + torch.where(x.sum() > 1.5, -math.inf, 0.0)
+        # Curvature underestimated 4x, so the first step overshoots into the -inf region.
+        return loss, x - 1, 0.25 * torch.eye(1, dtype=x.dtype)
+
+    def value_fun(x):
+        seen.append(x.item())
+        return system(x)[0]
+
+    res = piazzi.gauss_newton(system, torch.zeros(1, dtype=F64), method=method, max_step=10.0, value_fun=value_fun)
+    assert max(seen) > 1.5  # a -inf trial point was evaluated...
+    assert torch.isfinite(res.fun) and torch.allclose(res.x, torch.ones(1, dtype=F64), atol=1e-6), res  # ...not kept
+
+
+def test_minimize_rejects_minus_inf_trial():
+    seen = []
+
+    def fun(x):  # minimiser at x = 1, -inf beyond x = 1.5
+        seen.append(x.detach().item())
+        return ((x - 1) ** 2).sum() + torch.where(x.sum() > 1.5, -math.inf, 0.0)
+
+    res = piazzi.minimize(fun, torch.zeros(1, dtype=F64), options={"max_step": 10.0, "lr": 4.0, "step_tol": 1e-10})
+    assert max(seen) > 1.5
+    assert torch.isfinite(res.fun) and torch.allclose(res.x, torch.ones(1, dtype=F64), atol=1e-6), res

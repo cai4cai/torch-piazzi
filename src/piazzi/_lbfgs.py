@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 import torch
@@ -73,6 +74,10 @@ def lbfgs_armijo(
         counts["f"] += 1
         return loss.detach()
 
+    def armijo_ok(fn, bound):
+        # A non-finite trial value (NaN, or -inf, which would pass `<=`) is never accepted.
+        return math.isfinite(fn) and fn <= bound
+
     def result(n_iter, converged, message):
         return OptimizeResult(
             x=x.reshape(shape),
@@ -117,15 +122,14 @@ def lbfgs_armijo(
         x_new = x + t * d
         f_new, aux_new, g_new = eval_full(x_new)
         n_bt = 0
-        # Written as `not <=` so that a NaN trial value counts as insufficient decrease.
-        while not f_new.item() <= f_val + c1 * t * gtd and n_bt < max_backtracks:
+        while not armijo_ok(f_new.item(), f_val + c1 * t * gtd) and n_bt < max_backtracks:
             denom = 2.0 * (f_new.item() - f_val - gtd * t)
             t_q = -gtd * t * t / denom if denom > 0 else 0.5 * t
             t = min(max(t_q, 0.1 * t), 0.5 * t)
             x_new = x + t * d
             f_new, g_new = eval_value(x_new), None
             n_bt += 1
-        if not f_new.item() <= f_val + c1 * t * gtd:  # no sufficient decrease found
+        if not armijo_ok(f_new.item(), f_val + c1 * t * gtd):  # no sufficient decrease found
             S.clear()
             Y.clear()
             fails += 1

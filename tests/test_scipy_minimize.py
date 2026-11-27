@@ -127,3 +127,45 @@ def test_scipy_matches_native_minimize(x0):
     ref = piazzi.minimize(rosenbrock, x0, options={"max_iter": 500, "step_tol": 1e-12})
     res = pzs.minimize(rosenbrock, x0, method="BFGS", options={"gtol": 1e-10})
     assert torch.allclose(res.x, ref.x, atol=1e-5)
+
+
+@needs_scipy
+def test_scipy_args_are_bound():
+    target = torch.tensor([1.0, -2.0], dtype=torch.float64)
+
+    def fun(x, c):
+        return ((x - c) ** 2).sum()
+
+    def grad(x, c):
+        return 2 * (x - c)
+
+    def hessp(x, p, c):
+        return 2 * p
+
+    x0 = torch.zeros(2, dtype=torch.float64)
+    for kw in ({}, {"jac": grad}, {"jac": grad, "hessp": hessp, "method": "trust-ncg"}):
+        res = pzs.minimize(fun, x0, args=(target,), **kw)
+        assert torch.allclose(res.x, target, atol=1e-6), kw
+    res = pzs.minimize(lambda x, c: ((x - c) ** 2).sum(), torch.zeros(1, dtype=torch.float64), args=3.0)
+    assert torch.allclose(res.x, torch.tensor([3.0], dtype=torch.float64), atol=1e-6)
+
+
+@needs_scipy
+def test_scipy_rejects_complex_step(x0):
+    with pytest.raises(ValueError, match="complex-step"):
+        pzs.minimize(rosenbrock, x0, jac="cs")
+    with pytest.raises(ValueError, match="complex-step"):
+        pzs.minimize(rosenbrock, x0, method="trust-constr", hess="cs")
+
+
+@needs_scipy
+def test_scipy_hessp_autodiff_affine_objective():
+    """An affine objective has a constant gradient with no graph; its Hessian-vector product is 0."""
+    res = pzs.minimize(
+        lambda x: x.sum(),
+        torch.zeros(2, dtype=torch.float64),
+        method="trust-ncg",
+        hessp="autodiff",
+        options={"maxiter": 3},
+    )
+    assert res.n_iter <= 3

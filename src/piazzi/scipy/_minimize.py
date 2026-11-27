@@ -11,6 +11,7 @@ import torch
 
 from .._common import OptimizeResult, check_x0, detach_tree, split_aux
 from ._convert import n2t, t2n
+from ._least_squares import _bind
 
 __all__ = ["minimize"]
 
@@ -55,7 +56,7 @@ def minimize(
             ``"trust-exact"``, ...). The default ``None`` lets SciPy choose.
         jac: ``"autodiff"`` (default) computes the value and gradient together with
             autograd, in one evaluation; a callable ``jac(x) -> grad`` in PyTorch; or
-            SciPy's finite differences (``"2-point"``, ``"3-point"``, or ``None``).
+            SciPy's finite differences (``"2-point"``, ``"3-point"``, or ``None``; not ``"cs"``).
         hess: ``"autodiff"`` for the exact Hessian from autograd; a callable
             ``hess(x) -> H`` in PyTorch returning (n, n); or anything SciPy accepts
             (``"2-point"``, a ``HessianUpdateStrategy`` such as ``scipy.optimize.BFGS()``).
@@ -67,6 +68,8 @@ def minimize(
         callback: passed to SciPy; it receives SciPy's intermediate result, with NumPy
             arrays.
         options: SciPy's method-specific options.
+        args: as in SciPy, extra arguments for ``fun`` and callable ``jac``, ``hess`` and
+            ``hessp``.
         **kwargs: passed to ``scipy.optimize.minimize`` (``tol``, ``constraints``, ...).
             Constraint functions receive NumPy arrays.
 
@@ -81,6 +84,17 @@ def minimize(
         the wrapper evaluates ``fun`` once more, which the counts do not include.
     """
     like, shape = check_x0(x0)
+    if jac == "cs" or hess == "cs":
+        raise ValueError("complex-step derivatives ('cs') are not supported: use 'autodiff' or finite differences")
+    # SciPy's extra arguments are bound to the PyTorch functions, which the adapters call without them.
+    args = kwargs.pop("args", ())
+    args = args if isinstance(args, tuple) else (args,)
+    if args:
+        fun = _bind(fun, args, {})
+        jac = _bind(jac, args, {}) if callable(jac) else jac
+        if callable(hess) and not isinstance(hess, scipy.optimize.HessianUpdateStrategy):
+            hess = _bind(hess, args, {})
+        hessp = _bind(hessp, args, {}) if callable(hessp) else hessp
     n = like.numel()
     last: dict[str, Any] = {}
 
@@ -140,7 +154,12 @@ def minimize(
             xg = to_torch(xn).requires_grad_(True)
             with torch.enable_grad():
                 (g,) = torch.autograd.grad(scalar(xg), xg, create_graph=True)
-                (hv,) = torch.autograd.grad(g, xg, grad_outputs=to_torch(pn))
+                # An affine objective has a constant gradient with no graph: its Hessian is zero.
+                hv = None
+                if g.requires_grad:
+                    (hv,) = torch.autograd.grad(g, xg, grad_outputs=to_torch(pn), allow_unused=True)
+            if hv is None:
+                hv = torch.zeros_like(xg)
             return t2n(hv).reshape(-1)
 
     elif callable(hessp):
