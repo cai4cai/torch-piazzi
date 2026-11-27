@@ -11,3 +11,4 @@ piazzi is pre-alpha and not yet on PyPI. Development so far:
 - Device tests on the CPU, CUDA and MPS, in float32 and float64.
 - Notebooks: robust regression, Rosenbrock, bundle adjustment.
 - This documentation site.
+- Requires Python 3.11 and PyTorch 2.15 or later, and CI tests the lowest allowed versions of every dependency.

@@ -10,7 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.12"]
+        # The oldest and newest Pythons that torch supports (piazzi requires torch 2.15, which needs 3.11).
+        python-version: ["3.11", "3.15"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -21,6 +22,21 @@ jobs:
       - run: uv pip install -e . --group dev
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync pytest -q
+
+  # The lowest versions pyproject.toml allows for every direct dependency (torch, SciPy, torchsparsegradutils,
+  # pytest), on the oldest Python: the declared floors must actually work.
+  test-lowest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+      # The torch floor from the CPU index first; the lowest-direct resolution then keeps it.
+      - run: uv venv && uv pip install "torch==2.15.0" --index-url https://download.pytorch.org/whl/cpu
+      - run: uv pip install --resolution lowest-direct -e ".[scipy,sparse]" --group dev
+      - run: uv pip list
       - run: uv run --no-sync pytest -q
 
   # Only the required dependencies: the tests of the optional extras (SciPy, sparse CG) must skip.
