@@ -11,7 +11,7 @@
 | Function | Needs | Notes |
 |---|---|---|
 | `lbfgs_armijo(fun, x0)` | value + gradient (autograd) | L-BFGS with Armijo backtracking. It usually costs one evaluation per iteration, and the line search uses value-only evaluations. |
-| `minimize(fun, x0, method="lbfgs_armijo", options=...)` | value + gradient (autograd) | Like `scipy.optimize.minimize`: picks a scalar minimiser by name (`piazzi.MINIMIZE_METHODS`; currently only `lbfgs_armijo`) and passes it `options`. |
+| `minimize(fun, x0, method="lbfgs_armijo", options=...)` | value + gradient (autograd) | Like `scipy.optimize.minimize`: picks a scalar minimiser by name (`piazzi.MINIMIZE_METHODS`; currently only `lbfgs_armijo`) and passes it `options`. `method` can also be a `torch.optim` optimiser class (see below). |
 | `gauss_newton(system, x0, method="gn")` | `(loss, g, H)` | Gauss-Newton with Armijo backtracking. |
 | `gauss_newton(system, x0, method="lm")` / `levenberg_marquardt` | `(loss, g, H)` | Levenberg-Marquardt with Nielsen's damping update. |
 | `least_squares(fun, x0, loss=..., f_scale=...)` | residuals `r(x)` | Like `scipy.optimize.least_squares`: Levenberg-Marquardt (or `method="gn"`) on the normal equations from `least_squares_system`, with an optional robust loss. |
@@ -24,6 +24,17 @@ As in SciPy, `loss` is `"linear"` (the default), `"huber"`, `"soft_l1"`, `"cauch
 The gradient is `Jᵀ(ρ′ ⊙ r)`. By default the curvature model is `Jᵀ diag(ρ′) J` (`curvature="irls"`), the iteratively reweighted least-squares model that Ceres Solver also uses for these losses. `curvature="scipy"` uses SciPy's `max(ρ′ + 2ρ″z, ε)` weights instead. It is more accurate for inliers but nearly singular when most residuals start out as outliers. Both models converge to the same minimiser.
 
 The normal equations are solved in float64 on the CPU by default, so the objective itself can run in float32 on a GPU or MPS device. Every solver returns an `OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. You can pass `callback(info)` to record the iterates or to stop early by returning `True`.
+
+### `torch.optim` optimisers
+
+`piazzi.minimize` also runs any `torch.optim.Optimizer` subclass: pass the class as `method` and its constructor arguments in `options`, alongside piazzi's `max_iter`, `step_tol` and, for LBFGS, `max_eval`. The result is the usual `OptimizeResult`, with the optimiser itself in `result.raw`.
+
+```python
+res = piazzi.minimize(fun, x0, method=torch.optim.LBFGS, options={"line_search_fn": "strong_wolfe"})
+res = piazzi.minimize(fun, x0, method=torch.optim.Adam, options={"lr": 1e-2, "max_iter": 1000})
+```
+
+Each iteration is one optimiser step, so `callback` sees every iterate. `torch.optim.LBFGS` runs one L-BFGS iteration per step, with `max_iter`, `max_eval` and its `tolerance_grad` / `tolerance_change` tests applied to the whole run: it takes exactly the same path as a single upstream `step(closure)` with the same settings. Evaluations are memoised, so the point the strong-Wolfe line search accepts is not evaluated a second time at the start of the next step.
 
 ## Third-party backends
 
