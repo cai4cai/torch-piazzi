@@ -44,3 +44,42 @@ def test_counts_match_calls_so_far(name):
     assert (last.n_fun_grad, last.n_fun, last.n_system) == (res.n_fun_grad, res.n_fun, res.n_system)
     totals = [total for _, total, _ in seen]
     assert totals == sorted(totals)
+
+
+@pytest.mark.parametrize("x0", [X0, X0.repeat(5)], ids=["2d", "10d"])
+def test_lbfgs_armijo_backward_only_at_accepted_points(x0):
+    """The line search keeps each trial's graph and runs the backward pass only on acceptance."""
+    points, backwards = [], []
+
+    def fun(x):
+        points.append(x.detach().clone())
+        if x.requires_grad:
+            x.register_hook(backwards.append)  # runs once per backward pass through x
+        return rosen(x)
+
+    res = piazzi.minimize(fun, x0, options={"max_iter": 500})
+    assert res.converged and res.n_fun > 0  # the line search did backtrack
+    assert len(backwards) == res.n_fun_grad == res.n_iter + 1  # x0, then one per accepted step
+    assert len(points) == res.n_fun_grad + res.n_fun
+    assert not any(torch.equal(a, b) for a, b in zip(points, points[1:], strict=False))
+
+
+def test_lbfgs_armijo_value_fun_counts():
+    """With a value_fun, backtracking uses it; an accepted backtracked point costs one more fun call."""
+    calls = {"fun": 0, "value": 0}
+
+    def fun(x):
+        calls["fun"] += 1
+        return rosen(x)
+
+    def value_fun(x):
+        calls["value"] += 1
+        return rosen(x)
+
+    res = piazzi.minimize(fun, X0, options={"max_iter": 500, "value_fun": value_fun})
+    ref = piazzi.minimize(rosen, X0, options={"max_iter": 500})
+    assert torch.equal(res.x, ref.x)
+    # A rejected first trial is a call to fun counted as value-only, since its backward pass
+    # never runs; backtracking calls value_fun, and an accepted backtracked point calls fun.
+    assert calls["value"] > 0
+    assert calls["fun"] + calls["value"] == res.n_fun_grad + res.n_fun
