@@ -1,6 +1,10 @@
 """Execute notebooks and fail on any error, warning or other stderr output.
 
-Usage: python scripts/execute_notebooks.py [NOTEBOOK ...]  (default: notebooks/*.ipynb)
+Usage: python scripts/execute_notebooks.py [--smoke] [NOTEBOOK ...]  (default: notebooks/*.ipynb)
+
+--smoke sets PIAZZI_NOTEBOOK_SMOKE=1 in the kernel. Notebooks that are slow read it and cap their iterations,
+so that the run checks that the code works, not that the solvers converge (the numbers then differ from the
+committed outputs). Without it, or in Colab, the notebooks run in full.
 
 The kernel runs with PYTHONWARNINGS=default, so every warning is shown in the cell output
 (including DeprecationWarnings raised inside libraries, which IPython hides by default).
@@ -40,7 +44,9 @@ def problems_in(path: Path) -> list[str]:
 
 def main(argv: list[str]) -> int:
     os.environ["PYTHONWARNINGS"] = "default"  # inherited by the kernel
-    paths = [Path(a) for a in argv] or sorted((ROOT / "notebooks").glob("*.ipynb"))
+    if "--smoke" in argv:
+        os.environ["PIAZZI_NOTEBOOK_SMOKE"] = "1"
+    paths = [Path(a) for a in argv if a != "--smoke"] or sorted((ROOT / "notebooks").glob("*.ipynb"))
     failed = False
     for path in paths:
         problems = problems_in(path)
