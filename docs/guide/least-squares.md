@@ -2,9 +2,9 @@
 
 {func}`piazzi.least_squares` minimises
 
-$$F(x) = \tfrac12 \sum_i C^2 \rho\!\left(r_i(x)^2 / C^2\right), \qquad C = \texttt{f\_scale},$$
+$$F(x) = \tfrac12 \sum_i C^2 \rho\!\left(r_i(x)^2 / C^2\right),$$
 
-with Levenberg-Marquardt (or Gauss-Newton with `method="gn"`) on normal equations built by {func}`piazzi.least_squares_system`. The Jacobian of the residuals comes from forward-mode autodiff (`torch.func.jacfwd`), so `fun` only has to return the residuals.
+where $C$ is `f_scale`, the soft margin between inlier and outlier residuals. It uses Levenberg-Marquardt (or Gauss-Newton with `method="gn"`) on normal equations built by {func}`piazzi.least_squares_system`. The Jacobian of the residuals comes from forward-mode autodiff (`torch.func.jacfwd`), so `fun` only has to return the residuals.
 
 ## Robust losses
 
@@ -19,7 +19,7 @@ Both models converge to the same minimiser.
 
 ```python
 res = piazzi.least_squares(residuals, x0, loss="cauchy", f_scale=0.1)
-res = piazzi.least_squares(residuals, x0, loss=lambda z: torch.log1p(z))  # custom rho, same as "cauchy"
+res = piazzi.least_squares(residuals, x0, loss=lambda z: torch.log1p(z), f_scale=0.1)  # custom rho, same as "cauchy"
 ```
 
 The {doc}`robust regression notebook <../examples/robust_regression>` compares every loss with {func}`scipy.optimize.least_squares`.

@@ -39,8 +39,13 @@ nb_execution_mode = "off"
 
 
 def _copy_notebooks() -> None:
-    """Copy ``notebooks/*.ipynb`` into ``docs/examples/``: Sphinx only reads files under ``docs/``."""
+    """Copy ``notebooks/*.ipynb`` into ``docs/examples/``: Sphinx only reads files under ``docs/``.
+
+    Old copies are removed first, so a renamed or deleted notebook leaves no stale page behind.
+    """
     target = DOCS / "examples"
+    for old in target.glob("*.ipynb"):
+        old.unlink()
     for nb in sorted((ROOT / "notebooks").glob("*.ipynb")):
         shutil.copy2(nb, target / nb.name)
 
