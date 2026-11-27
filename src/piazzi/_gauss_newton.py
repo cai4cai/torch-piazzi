@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 import torch
 
-from ._common import Callback, IterationInfo, OptimizeResult, below_resolution, check_x0, detach_tree, retract, transfer
+from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract, transfer, unmoved
 from ._linear_solvers import LinearSolver, cg_solver, dense_solver, diagonal, is_sparse, matvec
 from ._manifolds import Manifold
 
@@ -70,9 +70,12 @@ def gauss_newton(
     gradient keeps steps above ``step_tol``; it plays the role of Ceres Solver's
     ``function_tolerance``. Near a zero residual the loss's rounding noise is absolute and
     that test cannot see it, so a failed step also counts as converged when the Gauss-Newton
-    step (Levenberg-Marquardt's first trial from the current point) is below the resolution
-    of ``x``, 32 units in the last place of ``max|x|``: that step estimates the distance to
-    the minimiser, and the loss cannot change measurably along it. A trial point with a non-finite
+    step, which estimates the distance to the minimiser, leaves ``x`` unmoved: every entry
+    within 32 units in the last place of its scale (``|x|``, or the manifold's
+    :meth:`~piazzi.Manifold.entry_scale`). The loss cannot change measurably along
+    such a step. For Levenberg-Marquardt, whose first trial from a point is damped, the
+    undamped Gauss-Newton step is checked as well (one extra linear solve), and a trial with
+    a non-finite value never counts. A trial point with a non-finite
     value is never accepted, and a non-finite value at ``x0`` stops the run at once.
 
     With a ``manifold`` (see :class:`piazzi.Manifold`), ``g`` and ``H`` are in its tangent
@@ -154,6 +157,13 @@ def gauss_newton(
             return torch.full_like(diag, lam)
         return lam * diag.clamp(min=1e-12 * diag.max().item())
 
+    def gauss_newton_unmoved(Hc, gc, x):
+        """Whether the (lightly ridged) Gauss-Newton step from ``x`` leaves it unmoved."""
+        d = solve(Hc, gc, gn_ridge * (diagonal(Hc).mean().item() if damping == "identity" else 1.0))
+        if not torch.dot(gc, d).item() < 0:  # not a descent direction: no estimate of the distance
+            return False
+        return unmoved(manifold, x, retract(manifold, x, transfer(d, x.device, x.dtype)))
+
     def solve(Hc, gc, lam):
         if linear_solver is not None:
             solver = linear_solver
@@ -209,6 +219,7 @@ def gauss_newton(
             dx = transfer(d, x.device, x.dtype)
             x_new = retract(manifold, x, dx)
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
+            full_unmoved = newton and math.isfinite(f_new.item()) and unmoved(manifold, x, x_new)
             n_bt = 0
 
             while not armijo_ok(f_new.item(), f_val, t, gtd, d) and n_bt < max_backtracks:
@@ -218,7 +229,7 @@ def gauss_newton(
                 n_bt += 1
             if not armijo_ok(f_new.item(), f_val, t, gtd, d):
                 notify(it, f_start, False)
-                if newton and below_resolution(d.abs().max().item(), x):
+                if full_unmoved:
                     return result(it + 1, True, "step below the resolution of x")
                 if below_noise(-gtd, f_new.item(), f_val):
                     return result(it + 1, True, "predicted decrease below rounding noise")
@@ -240,8 +251,12 @@ def gauss_newton(
         if rejections == 0:
             # The prediction of the first trial from this point: rejections raise lam and shrink
             # later predictions, which must not pass for convergence far from a minimiser.
-            pred_first, step_first = pred, d.abs().max().item()
+            pred_first = pred
         x_new = retract(manifold, x, transfer(d, x.device, x.dtype))
+        if rejections == 0:
+            # The first trial is damped, so its size alone does not estimate the distance to the
+            # minimiser: when it leaves x unmoved, the Gauss-Newton step is checked as well, once.
+            first_unmoved, gn_checked = unmoved(manifold, x, x_new), None
         if rejections == 0:  # after an accepted step the trial is usually accepted too
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             have_sys = True
@@ -272,8 +287,11 @@ def gauss_newton(
             nu *= 2.0
             rejections += 1
             stop = notify(it, f_start, False)
-            if below_resolution(step_first, x):
-                return result(it + 1, True, "step below the resolution of x")
+            if first_unmoved and math.isfinite(fn):
+                if gn_checked is None:
+                    gn_checked = gauss_newton_unmoved(Hc, gc, x)
+                if gn_checked:
+                    return result(it + 1, True, "step below the resolution of x")
             if below_noise(pred_first, fn, f_val):
                 return result(it + 1, True, "predicted decrease below rounding noise")
             if rejections >= max_rejections:

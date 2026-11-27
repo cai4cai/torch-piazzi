@@ -285,3 +285,47 @@ def test_float32_registration_converges_near_a_zero_residual(solver, seed):
         res = piazzi.least_squares(residuals, T0, manifold=manifold, method=solver, max_step=1e3)
     assert res.converged, res.message
     torch.testing.assert_close(res.x.double(), T_true, atol=1e-3, rtol=1e-3)
+
+
+def pinned_quadratic(x0, minimum, penalty):
+    """A (loss, g, H) system for 0.5 |x - minimum|^2, except that the loss gets ``penalty``
+    added anywhere but at ``x0``: every step is then rejected, as at a noise floor."""
+
+    def system(x):
+        r = x - minimum
+        loss = 0.5 * (r * r).sum() + (0.0 if torch.equal(x, x0) else penalty)
+        return torch.as_tensor(loss, dtype=x.dtype), r, torch.eye(x.numel(), dtype=x.dtype)
+
+    return system
+
+
+@pytest.mark.parametrize("method", ["gn", "lm"])
+def test_resolution_rule_measures_each_parameter_at_its_own_scale(method):
+    """With a large parameter next to a small one, a step that is tiny next to max|x| can still
+    move the small one: the run must not report convergence (review of #25)."""
+    x0 = torch.tensor([1e4, 1.0])
+    system = pinned_quadratic(x0, torch.tensor([1e4, 1.001]), penalty=1.0)
+    res = piazzi.gauss_newton(system, x0, method=method)
+    assert not res.converged, res.message
+
+
+def test_resolution_rule_ignores_heavily_damped_lm_trials():
+    """With heavy damping the first trial is tiny however far the minimiser is: the undamped
+    Gauss-Newton step must be checked before reporting convergence (review of #25)."""
+    x0 = torch.tensor([1.0, 1.0], dtype=torch.float64)
+    system = pinned_quadratic(x0, torch.tensor([2.0, 2.0], dtype=torch.float64), penalty=1.0)
+    # tau = 1e15: the first trial moves x by ~1e-15, a few ulps. Two rejections keep the trials
+    # above half an ulp, so that x does move (a zero step is another matter: step_tol).
+    res = piazzi.gauss_newton(system, x0, method="lm", tau=1e15, max_rejections=2)
+    assert not res.converged and res.message == "too many rejected steps in a row", res.message
+
+
+@pytest.mark.parametrize("method", ["gn", "lm"])
+def test_resolution_rule_needs_a_finite_trial_value(method):
+    """A step that leaves x unmoved but lands on a NaN must not count as convergence."""
+    x0 = torch.tensor([1.0, 1.0], dtype=torch.float64)
+    minimum = x0 + 2 * torch.finfo(torch.float64).eps
+    system = pinned_quadratic(x0, minimum, penalty=float("nan"))
+    # Judge the first (full) step alone: no backtracking, a single rejection.
+    res = piazzi.gauss_newton(system, x0, method=method, max_backtracks=0, max_rejections=1)
+    assert not res.converged, res.message

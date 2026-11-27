@@ -100,22 +100,29 @@ def transfer(t: torch.Tensor, device, dtype: torch.dtype) -> torch.Tensor:
     return t.to(device).to(dtype)
 
 
-# How many units in the last place of max|x| a step must exceed to count as moving x. 32 was
-# chosen on float32 problems (Rosenbrock from random starts, SE(3) registration with data
-# perturbed by an ulp, robust fits): it stops every run that reached the minimiser, and never
-# one that had not; float64 runs are unaffected.
+# How many units in the last place an entry of x may change by and still count as unmoved.
+# Tuned on a float32 benchmark (Rosenbrock from random starts, SE(3) registration with data
+# perturbed by an ulp, robust and far-off exponential fits, scaled objectives, runs capped by
+# max_iter; see #19 and #25): there, it let every run that reached a minimiser report
+# convergence, and no run that had not. It is a heuristic, not a guarantee.
 RESOLUTION_ULPS = 32
 
 
-def below_resolution(step: float, x: torch.Tensor) -> bool:
-    """Whether a step of max-norm ``step`` is too small to move ``x`` measurably in its dtype.
+def unmoved(manifold, x: torch.Tensor, x_new: torch.Tensor) -> bool:
+    """Whether ``x_new`` is within the resolution of ``x``: every entry within ``RESOLUTION_ULPS``
+    units in the last place of its scale, ``|x|`` entry by entry or the manifold's
+    :meth:`~piazzi.Manifold.entry_scale` (an entry of scale 0 must stay exactly the same).
 
-    The resolution is ``RESOLUTION_ULPS`` units in the last place of ``max|x|``. A Newton-like
-    step (Gauss-Newton, Levenberg-Marquardt's first trial, an L-BFGS step from its memory)
-    estimates the distance to the minimiser, so when it is this small, ``x`` is a minimiser to
-    working precision, and any change in the loss along it is rounding noise.
+    A Newton-like step (the Gauss-Newton step, an L-BFGS step from its memory) estimates the
+    distance to the minimiser, so when it leaves ``x`` unmoved in this sense, ``x`` is a
+    minimiser to working precision and any change in the loss along the step is rounding
+    noise. Comparing points entry by entry (rather than the step with ``max|x|``) keeps small
+    parameters next to large ones from counting as converged early, and works on manifolds,
+    where the step lives in tangent coordinates.
     """
-    return step <= RESOLUTION_ULPS * torch.finfo(x.dtype).eps * x.abs().max().item()
+    scale = x.abs() if manifold is None else manifold.entry_scale(x)
+    tol = RESOLUTION_ULPS * torch.finfo(x.dtype).eps * scale
+    return bool(((x_new - x).abs() <= tol).all())
 
 
 def retract(manifold, x: torch.Tensor, d: torch.Tensor) -> torch.Tensor:

@@ -11,11 +11,11 @@ from ._common import (
     Callback,
     IterationInfo,
     OptimizeResult,
-    below_resolution,
     check_x0,
     detach_tree,
     retract,
     split_aux,
+    unmoved,
 )
 from ._manifolds import Manifold
 
@@ -56,7 +56,8 @@ def lbfgs_armijo(
     or once a step is below ``step_tol`` (max-norm). The stop counts as convergence when the
     first failed search (from the L-BFGS memory, before the steepest-descent retry) showed a
     minimiser to working precision: its step, which estimates the distance to the minimiser,
-    was below the resolution of ``x`` (32 units in the last place of ``max|x|``), or the loss
+    left ``x`` unmoved (every entry within 32 units in the last place of its scale, ``|x|`` or
+    the manifold's :meth:`~piazzi.Manifold.entry_scale`, at a finite value), or the loss
     did not measurably go up (by more than ``8 * eps * |loss|`` in its dtype) while that step
     was below ``step_tol`` or predicted a decrease below that rounding noise. Near the optimum
     of a float32 objective, the line search otherwise keeps failing on noise. A trial
@@ -184,6 +185,9 @@ def lbfgs_armijo(
         pred, step0 = -t * gtd, t * d.abs().max().item()  # predicted decrease and size of the first trial
         x_new = retract(manifold, x, t * d)
         f_new, aux_new, pending = eval_trial(x_new)
+        # A step from the L-BFGS memory estimates the distance to the minimiser: if it leaves x
+        # unmoved (and its value is finite), x is a minimiser to working precision.
+        first_unmoved = used_memory and math.isfinite(f_new.item()) and unmoved(manifold, x, x_new)
         n_bt = 0
         while not armijo_ok(f_new.item(), f_val + c1 * t * gtd) and n_bt < max_backtracks:
             reject(pending)
@@ -212,7 +216,7 @@ def lbfgs_armijo(
             noise = 8 * torch.finfo(f.dtype).eps * abs(f_val)
             flat = math.isfinite(f_new.item()) and f_new.item() <= f_val + noise
             if stalled is None:
-                if used_memory and below_resolution(step0, x):
+                if first_unmoved:
                     stalled = "step below the resolution of x"
                 elif flat and step0 < step_tol:
                     stalled = "step below step_tol"

@@ -109,6 +109,17 @@ class Manifold:
         """
         raise NotImplementedError
 
+    def entry_scale(self, x: torch.Tensor) -> torch.Tensor:
+        """The size each entry of the point ``x`` is computed at, shaped like ``x``.
+
+        The solvers treat a change of an entry by a few units in the last place of this size
+        as rounding noise (when deciding that a Newton-like step no longer moves ``x``). The
+        default, ``|x|``, suits independent coordinates; structured points override it: the
+        entries of a rotation matrix all carry an absolute error of about ``eps``, since its
+        rows have norm 1.
+        """
+        return x.abs()
+
 
 class Euclidean(Manifold):
     """Plain vector space: ``plus(x, delta) = x + delta``.
@@ -326,6 +337,9 @@ class SO3(Manifold):
         Rx, Ry = x.reshape(3, 3), y.reshape(3, 3)
         return so3_log(Rx.T @ Ry if self.side == "right" else Ry @ Rx.T)
 
+    def entry_scale(self, x):
+        return torch.ones_like(x)  # rows of norm 1
+
 
 class SE3(Manifold):
     """Rigid transforms stored as 4 x 4 matrices ``[[R, t], [0, 1]]``; 6 degrees of freedom.
@@ -386,6 +400,16 @@ class SE3(Manifold):
             dt = torch.linalg.solve(_se3_V(omega), dt)
         return torch.cat([dt, omega])
 
+    def entry_scale(self, x):
+        # Rotation entries (and the constant bottom row) at 1; the translation at the size of
+        # the vectors it is computed from: t itself, and the pivot it rotates about.
+        scale = torch.ones_like(x).reshape(4, 4)
+        size = x.reshape(4, 4)[:3, 3].norm()
+        if self.pivot is not None:
+            size = torch.maximum(size, self.pivot.to(dtype=x.dtype, device=x.device).norm())
+        scale[:3, 3] = size
+        return scale.reshape(x.shape)
+
 
 class Product(Manifold):
     """Cartesian product of manifolds, stored as one flat vector (blocks concatenated).
@@ -434,3 +458,7 @@ class Product(Manifold):
     def minus(self, y, x):
         pairs = zip(self.manifolds, self._blocks(y), self._blocks(x), strict=True)
         return torch.cat([m.minus(by, bx).reshape(-1) for m, by, bx in pairs])
+
+    def entry_scale(self, x):
+        blocks = zip(self.manifolds, self._blocks(x), strict=True)
+        return torch.cat([m.entry_scale(b).reshape(-1) for m, b in blocks]).reshape(x.shape)
