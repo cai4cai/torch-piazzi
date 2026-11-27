@@ -332,3 +332,42 @@ def test_resolution_rule_needs_a_finite_trial_value(method):
     # Judge the first (full) step alone: no backtracking, a single rejection.
     res = piazzi.gauss_newton(system, x0, method=method, max_backtracks=0, max_rejections=1)
     assert not res.converged, res.message
+
+
+def test_float32_zero_valued_parameter_converges():
+    """An offset whose true value is 0 has no scale of its own: without a floor on the entry
+    scale, the resolution rule could never fire (review of #25)."""
+    g = torch.Generator().manual_seed(1)
+    t = torch.linspace(0, 4, 40)
+    a, b = 1 + 3 * torch.rand(1, generator=g).item(), 0.5 + torch.rand(1, generator=g).item()
+    y = a * torch.exp(-b * t)  # a zero residual at (a, b, 0)
+    res = piazzi.least_squares(lambda th: th[0] * torch.exp(-th[1] * t) + th[2] - y, torch.tensor([1.0, 1.0, 0.5]))
+    assert res.converged, res.message
+    assert abs(res.x[0].item() - a) < 1e-3 * a and abs(res.x[2].item()) < 1e-3
+
+
+def scripted(values, gradients):
+    """An objective whose value and gradient at the k-th call are values[k] and gradients[k],
+    wherever it is evaluated: it scripts the line search's decisions exactly."""
+    calls = []
+
+    def fun(x):
+        k = min(len(calls), len(values) - 1)
+        calls.append(k)
+        g = torch.tensor(gradients[k], dtype=x.dtype)
+        return values[k] + (g * (x - x.detach())).sum()
+
+    return fun
+
+
+def test_lbfgs_stall_verdict_does_not_survive_real_progress(monkeypatch):
+    """A failed step from memory may show a minimiser, and that verdict is kept for a later
+    steepest-descent failure, but only near where it was given (review of #25)."""
+    monkeypatch.setattr("piazzi._lbfgs.unmoved", lambda *args: True)  # every step from memory "unmoved"
+    values = [10.0, 5.0] + [6.0] * 11 + [1.0] + [2.0] * 11
+    gradients = [[1.0, 0.0], [0.5, 0.0]] + [[0.5, 0.0]] * 11 + [[0.5, 1.0]] + [[0.5, 1.0]] * 11
+    # 0: x0. 1: steepest step, accepted (a curvature pair). 2-12: a step from memory and its
+    # backtracks fail: verdict. 13: the steepest-descent retry moves x by 0.5 and is accepted,
+    # real progress; its pair is dropped. 14-24: the next steepest-descent search fails.
+    res = piazzi.lbfgs_armijo(scripted(values, gradients), torch.zeros(2, dtype=torch.float64))
+    assert res.message == "line search failed" and not res.converged, res.message

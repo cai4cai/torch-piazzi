@@ -109,10 +109,27 @@ def transfer(t: torch.Tensor, device, dtype: torch.dtype) -> torch.Tensor:
 RESOLUTION_ULPS = 64
 
 
+def entry_scales(manifold, x: torch.Tensor) -> torch.Tensor:
+    """The scale of each entry of ``x`` (``|x|`` or the manifold's
+    :meth:`~piazzi.Manifold.entry_scale`), floored at ``sqrt(eps)`` times the largest one.
+
+    The floor gives entries at or near 0 (a parameter whose value is 0, a translation at the
+    origin) a usable scale, and is small enough that a small parameter next to a large one
+    still moves visibly.
+    """
+    scale = x.abs() if manifold is None else manifold.entry_scale(x)
+    return scale.clamp(min=torch.finfo(x.dtype).eps ** 0.5 * scale.max().item())
+
+
+def within(manifold, x: torch.Tensor, x_new: torch.Tensor, relative: float) -> bool:
+    """Whether every entry of ``x_new`` is within ``relative`` times its scale of ``x``."""
+    return bool(((x_new - x).abs() <= relative * entry_scales(manifold, x)).all())
+
+
 def unmoved(manifold, x: torch.Tensor, x_new: torch.Tensor) -> bool:
     """Whether ``x_new`` is within the resolution of ``x``: every entry within ``RESOLUTION_ULPS``
     units in the last place of its scale, ``|x|`` entry by entry or the manifold's
-    :meth:`~piazzi.Manifold.entry_scale` (an entry of scale 0 must stay exactly the same).
+    :meth:`~piazzi.Manifold.entry_scale`, floored at ``sqrt(eps)`` times the largest scale.
 
     A Newton-like step (the Gauss-Newton step, an L-BFGS step from its memory) estimates the
     distance to the minimiser, so when it leaves ``x`` unmoved in this sense, ``x`` is a
@@ -121,9 +138,7 @@ def unmoved(manifold, x: torch.Tensor, x_new: torch.Tensor) -> bool:
     parameters next to large ones from counting as converged early, and works on manifolds,
     where the step lives in tangent coordinates.
     """
-    scale = x.abs() if manifold is None else manifold.entry_scale(x)
-    tol = RESOLUTION_ULPS * torch.finfo(x.dtype).eps * scale
-    return bool(((x_new - x).abs() <= tol).all())
+    return within(manifold, x, x_new, RESOLUTION_ULPS * torch.finfo(x.dtype).eps)
 
 
 def retract(manifold, x: torch.Tensor, d: torch.Tensor) -> torch.Tensor:

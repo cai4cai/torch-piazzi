@@ -16,6 +16,7 @@ from ._common import (
     retract,
     split_aux,
     unmoved,
+    within,
 )
 from ._manifolds import Manifold
 
@@ -54,14 +55,16 @@ def lbfgs_armijo(
     move; the run then retries once with steepest descent. It stops after two failures in
     a row, after one failure of a steepest-descent step (a retry would repeat it exactly),
     or once a step is below ``step_tol`` (max-norm). The stop counts as convergence when the
-    last failed search from the L-BFGS memory (since the last step from memory that was
-    accepted; steepest-descent steps in between do not count) showed a
+    last failed search from the L-BFGS memory showed a
     minimiser to working precision: its step, which estimates the distance to the minimiser,
     left ``x`` unmoved (every entry within 64 units in the last place of its scale, ``|x|`` or
     the manifold's :meth:`~piazzi.Manifold.entry_scale`, at a finite value), or the loss
     did not measurably go up (by more than ``8 * eps * |loss|`` in its dtype) while that step
     was below ``step_tol`` or predicted a decrease below that rounding noise. Near the optimum
-    of a float32 objective, the line search otherwise keeps failing on noise. A trial
+    of a float32 objective, the line search otherwise keeps failing on noise. That verdict
+    survives steepest-descent steps that succeed on noise, as long as ``x`` stays within
+    ``sqrt(eps)`` (per entry, at its scale) of where it was given, the precision to which a
+    minimiser is determined; an accepted step from memory, or moving further, clears it. A trial
     point with a non-finite value never passes the line search, and a non-finite value at
     ``x0`` stops the run at once.
 
@@ -153,7 +156,7 @@ def lbfgs_armijo(
         return result(0, True, "no free parameters")
     S: list[torch.Tensor] = []
     Y: list[torch.Tensor] = []
-    fails, stalled = 0, None
+    fails, stalled, x_stalled = 0, None, None
     eps = torch.finfo(g.dtype).eps
     for it in range(max_iter):
         f_val = f.item()
@@ -225,7 +228,7 @@ def lbfgs_armijo(
             elif flat and pred <= noise:
                 verdict = "predicted decrease below rounding noise"
             if used_memory or stalled is None:
-                stalled = verdict
+                stalled, x_stalled = verdict, x
             if fails >= 2 or not used_memory:
                 if stalled is not None:
                     return result(it + 1, True, stalled)
@@ -235,7 +238,15 @@ def lbfgs_armijo(
                 return result(it + 1, False, "stopped by callback")
             continue
         fails = 0
-        if used_memory:  # real progress from the memory: an earlier verdict no longer holds
+        # An earlier verdict holds across steepest-descent steps that succeed on noise at a noise
+        # floor, not across real progress: an accepted step from memory clears it, and so does
+        # leaving the neighbourhood where it was given. A minimiser is only determined to about
+        # sqrt(eps) (the loss is flat to second order), so within that distance (per entry, at
+        # its scale) every point is a minimiser to working precision. Near a zero residual the
+        # loss's noise is absolute, so the size of the decrease cannot tell noise from progress.
+        if stalled is not None and (
+            used_memory or not within(manifold, x_stalled, x_new, torch.finfo(x.dtype).eps ** 0.5)
+        ):
             stalled = None
         if pending is None:  # accepted on a value_fun evaluation
             f_new, aux_new, g_new = eval_full(x_new)
