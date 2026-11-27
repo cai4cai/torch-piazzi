@@ -67,13 +67,12 @@ def least_squares(
             :class:`piazzi.IterationInfo`, as for the native solvers (``fun`` is the cost;
             ``aux`` is ``None``); returning ``True`` stops the run. Needs SciPy 1.16 or
             later. Default: ``None``
-        args (tuple, optional): as in SciPy, extra positional arguments for ``fun`` and a
-            callable ``jac``.
-        kwargs (dict, optional): as in SciPy, extra keyword arguments for ``fun`` and a
-            callable ``jac``.
         **kwargs: other keyword arguments of :func:`scipy.optimize.least_squares`
             (``method``, ``ftol``, ``xtol``, ``gtol``, ``max_nfev``, ``x_scale``, ...).
             Tensors given as ``x_scale`` or ``diff_step`` are converted like ``bounds``.
+            As in SciPy, ``args=(...)`` and ``kwargs={...}`` hold extra positional and
+            keyword arguments for ``fun`` and a callable ``jac`` (not options for SciPy);
+            both are empty by default.
 
     Returns:
         OptimizeResult: ``x`` with the shape, dtype and device of ``x0``, and ``fun`` the
@@ -83,6 +82,9 @@ def least_squares(
         differences, which SciPy's ``nfev`` leaves out for ``"trf"`` and ``"dogbox"``) and
         ``n_system`` Jacobian evaluations (``jac="autodiff"`` or a callable).
         ``converged`` is SciPy's ``success``, and ``raw`` is SciPy's own result.
+
+    See Also:
+        - :func:`piazzi.least_squares`: the native solver with the same calling convention.
 
     Example::
 

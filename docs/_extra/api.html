@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>API reference moved</title>
+<meta name="robots" content="noindex">
+<script>
+  // The API reference moved from api.html to api/ (one page per group). Keep old links working,
+  // including anchors such as api.html#piazzi.gauss_newton.
+  (function () {
+    var pages = {
+      interfaces: ["least_squares", "minimize", "MINIMIZE_METHODS"],
+      methods: ["gauss_newton", "levenberg_marquardt", "lbfgs_armijo", "least_squares_system"],
+      results: ["OptimizeResult", "IterationInfo"],
+      losses: ["robust_cost", "LOSSES"],
+      manifolds: ["Manifold", "Euclidean", "Subset", "SO3", "SE3", "Product",
+                  "so3_exp", "so3_log", "so3_hat", "se3_exp", "se3_log"],
+      "linear-solvers": ["dense_solver", "cg_solver", "LinearSolver"]
+    };
+    var hash = window.location.hash.slice(1);
+    var target = "api/index.html";
+    if (hash.indexOf("piazzi.scipy.") === 0 || hash === "module-piazzi.scipy") {
+      target = "api/scipy.html#" + hash;
+    } else if (hash.indexOf("piazzi.") === 0) {
+      var name = hash.slice("piazzi.".length).split(".")[0];
+      for (var page in pages) {
+        if (pages[page].indexOf(name) >= 0) { target = "api/" + page + ".html#" + hash; break; }
+      }
+    }
+    window.location.replace(target);
+  })();
+</script>
+<meta http-equiv="refresh" content="0; url=api/index.html">
+</head>
+<body><p>The API reference has moved to <a href="api/index.html">api/index.html</a>.</p></body>
+</html>

@@ -133,6 +133,11 @@ def gauss_newton(
         ``aux``, ``n_iter``, the counts ``n_system`` (full system evaluations) and ``n_fun``
         (value-only evaluations), and ``converged`` and ``message``.
 
+    See Also:
+        - :func:`piazzi.least_squares`: the high-level interface, which builds ``system`` from
+          residuals with :func:`piazzi.least_squares_system` and passes its other keyword arguments
+          here.
+
     Example::
 
         >>> t = torch.linspace(0, 1, 20, dtype=torch.float64)
@@ -336,5 +341,8 @@ def levenberg_marquardt(system: Callable, x0: torch.Tensor, **kwargs) -> Optimiz
 
     Returns:
         OptimizeResult: as for :func:`piazzi.gauss_newton`.
+
+    See Also:
+        - :func:`piazzi.least_squares`: the high-level interface, which runs this method by default.
     """
     return gauss_newton(system, x0, method="lm", **kwargs)

@@ -96,6 +96,10 @@ def lbfgs_armijo(
         ``aux``, ``n_iter``, the counts ``n_fun_grad`` (value and gradient) and ``n_fun``
         (value only), and ``converged`` and ``message``.
 
+    See Also:
+        - :func:`piazzi.minimize`: the high-level interface, which runs this method by default
+          (``method="lbfgs_armijo"``) and passes its ``options`` here.
+
     Example::
 
         >>> def rosenbrock(x):

@@ -42,7 +42,7 @@ Executed notebooks: robust regression, Rosenbrock, bundle adjustment.
 :::
 
 :::{grid-item-card} API reference
-:link: api
+:link: api/index
 :link-type: doc
 Every public function and class.
 :::
@@ -56,7 +56,7 @@ Every public function and class.
 getting-started
 guide/index
 examples/index
-api
+api/index
 related-work
 contributing
 changelog

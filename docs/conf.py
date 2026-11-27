@@ -103,6 +103,8 @@ _GITHUB_MARK = (
 html_theme = "furo"
 html_title = f"piazzi {release}"
 html_static_path = ["_static"]
+# api.html redirects old links (the API reference moved to api/).
+html_extra_path = ["_extra"]
 html_theme_options = {
     "source_repository": "https://github.com/cai4cai/torch-piazzi",
     "source_branch": "main",

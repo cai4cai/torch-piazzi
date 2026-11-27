@@ -77,7 +77,7 @@ def minimize(
             then NaN unless known) and cannot be stopped. Default: ``None``
         options (dict, optional): SciPy's method-specific options. Default: ``None``
         args (tuple, optional): as in SciPy, extra arguments for ``fun`` and callable
-            ``jac``, ``hess`` and ``hessp``.
+            ``jac``, ``hess`` and ``hessp``. Default: ``()``
         **kwargs: other keyword arguments of :func:`scipy.optimize.minimize` (``tol``,
             ``constraints``, ...). Constraint functions receive NumPy arrays.
 
@@ -92,6 +92,9 @@ def minimize(
         result. ``fun`` and ``aux`` come from the last evaluation at SciPy's final ``x``; if
         SciPy did not evaluate there last, the wrapper evaluates ``fun`` once more, which
         the counts do not include.
+
+    See Also:
+        - :func:`piazzi.minimize`: the native interface with the same calling convention.
 
     Example::
 
