@@ -1,0 +1,20 @@
+"""piazzi: deterministic PyTorch solvers for small nonlinear fitting problems.
+
+Named after Giuseppe Piazzi, who discovered Ceres in 1801; Gauss recovered it from
+Piazzi's observations with the method of least squares.
+"""
+
+from ._common import IterationInfo, OptimizeResult
+from .gauss_newton import gauss_newton, least_squares_system, levenberg_marquardt
+from .lbfgs import lbfgs_armijo
+
+__version__ = "0.1.0.dev0"
+
+__all__ = [
+    "IterationInfo",
+    "OptimizeResult",
+    "gauss_newton",
+    "lbfgs_armijo",
+    "least_squares_system",
+    "levenberg_marquardt",
+]

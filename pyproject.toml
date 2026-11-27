@@ -1,0 +1,44 @@
+[project]
+name = "piazzi"
+dynamic = ["version"]
+description = "Deterministic PyTorch solvers for small nonlinear fitting problems: L-BFGS with Armijo line search, Gauss-Newton, Levenberg-Marquardt."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "CAI4CAI" }]
+requires-python = ">=3.10"
+dependencies = ["torch>=2.1"]
+keywords = ["pytorch", "optimisation", "least-squares", "gauss-newton", "levenberg-marquardt", "l-bfgs", "registration"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+[project.urls]
+Repository = "https://github.com/cai4cai/torch-piazzi"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/piazzi/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/piazzi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E702"]
