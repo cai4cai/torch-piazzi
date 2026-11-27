@@ -48,7 +48,9 @@ def gauss_newton(
       (it is usually accepted too); after a rejection the trial is value-only. Stops
       after ``max_rejections`` rejections in a row.
 
-    Both stop once a step is below ``step_tol`` (max-norm).
+    Both stop once a step is below ``step_tol`` (max-norm), or when the gradient is exactly
+    zero (a stationary point, where ``H`` may be singular). A trial point with a non-finite
+    value is never accepted, and a non-finite value at ``x0`` stops the run at once.
 
     Args:
         value_fun: optional cheaper ``value_fun(x) -> loss`` for value-only evaluations.
@@ -102,11 +104,15 @@ def gauss_newton(
         return callback is not None and bool(callback(IterationInfo(it, x.reshape(shape), f, f_start, aux, accepted)))
 
     f, aux, g, H = eval_sys(x)
+    if not torch.isfinite(f):
+        return result(0, False, "objective is not finite at x0")
     gc, Hc = host(g, H)
     lam = tau * Hc.diagonal().max().item()
     nu, rejections, have_sys = 2.0, 0, True
     for it in range(max_iter):
         f_val, f_start = f.item(), f
+        if gc.abs().max().item() == 0:  # stationary, and H may be singular (e.g. J = 0)
+            return result(it, True, "gradient is zero")
         if method == "gn":
             d = solve(Hc, gc, gn_ridge * Hc.diagonal().mean().item())
             gtd = torch.dot(gc, d).item()
@@ -115,12 +121,13 @@ def gauss_newton(
             x_new = x + dx
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             n_bt = 0
-            while f_new.item() > f_val + c1 * t * gtd and n_bt < max_backtracks:
+            # Written as `not <=` so that a NaN trial value counts as insufficient decrease.
+            while not f_new.item() <= f_val + c1 * t * gtd and n_bt < max_backtracks:
                 t *= 0.5
                 x_new = x + t * dx
                 f_new, g_new = eval_value(x_new), None
                 n_bt += 1
-            if f_new.item() > f_val + c1 * t * gtd:
+            if not f_new.item() <= f_val + c1 * t * gtd:
                 notify(it, f_start, False)
                 return result(it + 1, False, "line search failed")
             if g_new is None:
@@ -144,7 +151,9 @@ def gauss_newton(
         else:
             f_new, have_sys = eval_value(x_new), False
         rho = (f_val - f_new.item()) / max(pred, 1e-20)
-        if rho > 0:
+        # At a minimiser the model predicts no decrease (pred = 0), so the gain ratio is 0 and
+        # would reject the zero step forever; accept it when the value did not go up.
+        if rho > 0 or (pred <= 0 and f_new.item() <= f_val):
             if not have_sys:
                 f_new, aux_new, g_new, H_new = eval_sys(x_new)
             lam *= max(1.0 / 3.0, 1.0 - (2.0 * rho - 1.0) ** 3)

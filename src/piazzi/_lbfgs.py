@@ -39,7 +39,9 @@ def lbfgs_armijo(
     Curvature pairs with ``s.y <= 0`` are skipped (Armijo does not guarantee positive
     curvature). If no decrease is found the memory is reset and the iterate does not
     move; two such failures in a row, or a step below ``step_tol`` (max-norm), stop the
-    run: near the optimum the line search otherwise keeps failing on float32 noise.
+    run: near the optimum the line search otherwise keeps failing on float32 noise. A trial
+    point with a non-finite value never passes the line search, and a non-finite value at
+    ``x0`` stops the run at once.
 
     Args:
         fun: ``fun(x) -> loss`` (or ``(loss, aux)`` with ``has_aux``), a scalar tensor
@@ -84,6 +86,8 @@ def lbfgs_armijo(
         )
 
     f, aux, g = eval_full(x)
+    if not torch.isfinite(f):
+        return result(0, False, "objective is not finite at x0")
     S: list[torch.Tensor] = []
     Y: list[torch.Tensor] = []
     fails = 0
@@ -113,14 +117,15 @@ def lbfgs_armijo(
         x_new = x + t * d
         f_new, aux_new, g_new = eval_full(x_new)
         n_bt = 0
-        while f_new.item() > f_val + c1 * t * gtd and n_bt < max_backtracks:
+        # Written as `not <=` so that a NaN trial value counts as insufficient decrease.
+        while not f_new.item() <= f_val + c1 * t * gtd and n_bt < max_backtracks:
             denom = 2.0 * (f_new.item() - f_val - gtd * t)
             t_q = -gtd * t * t / denom if denom > 0 else 0.5 * t
             t = min(max(t_q, 0.1 * t), 0.5 * t)
             x_new = x + t * d
             f_new, g_new = eval_value(x_new), None
             n_bt += 1
-        if f_new.item() > f_val + c1 * t * gtd:  # no sufficient decrease found
+        if not f_new.item() <= f_val + c1 * t * gtd:  # no sufficient decrease found
             S.clear()
             Y.clear()
             fails += 1

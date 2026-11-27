@@ -34,7 +34,8 @@ class OptimizeResult:
 
     ``n_fun_grad``: value + gradient evaluations, ``n_fun``: value-only evaluations,
     ``n_system``: normal-equation evaluations (Gauss-Newton / Levenberg-Marquardt).
-    ``converged`` is True when the run stopped on ``step_tol``; ``message`` says why it stopped.
+    ``converged`` is True when the run stopped on ``step_tol`` or at a zero gradient;
+    ``message`` says why it stopped.
     ``raw`` holds the backend's own result object for third-party wrappers (``piazzi.scipy``),
     and is None for the native solvers.
     """
