@@ -22,3 +22,15 @@ jobs:
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync pytest -q
+
+  notebooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv venv && uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: uv pip install -e . --group notebooks
+      # Fails on any error, warning or other stderr output in a cell.
+      - run: uv run --no-sync python scripts/execute_notebooks.py
