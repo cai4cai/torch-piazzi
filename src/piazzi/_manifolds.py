@@ -78,11 +78,18 @@ __all__ = [
 
 
 class Manifold:
-    """Base class: a parameter set with a retraction ``plus``.
+    """Base class for manifolds: a parameter set with a retraction ``plus``.
 
-    Subclasses set ``ambient_shape`` (the shape a point is stored in, or None for "any") and
-    implement :meth:`tangent_size` and :meth:`plus`. Points may be passed flattened or in
-    ``ambient_shape``; ``plus`` returns the shape it was given.
+    The solvers take derivatives with respect to a tangent vector ``delta`` at
+    ``delta = 0`` and apply each step as ``x <- plus(x, step)``, as Ceres Solver's
+    ``Manifold`` does. Subclasses set ``ambient_shape`` and implement :meth:`tangent_size` and
+    :meth:`plus`; :meth:`minus` is optional. ``plus`` must be differentiable in forward mode
+    (:func:`torch.func.jacfwd`). Points may be passed flattened or in ``ambient_shape``, and
+    ``plus`` returns the shape it was given.
+
+    Attributes:
+        ambient_shape (tuple of int or None): the shape a point is stored in, or ``None`` for
+            any shape.
     """
 
     ambient_shape: tuple[int, ...] | None = None
@@ -94,38 +101,71 @@ class Manifold:
         return math.prod(self.ambient_shape)
 
     def tangent_size(self, x: torch.Tensor) -> int:
-        """Number of degrees of freedom at ``x`` (the length of ``delta``)."""
+        """Number of degrees of freedom at ``x``.
+
+        Args:
+            x (Tensor): a point on the manifold.
+
+        Returns:
+            int: the length of a tangent vector ``delta`` at ``x``.
+        """
         raise NotImplementedError
 
     def plus(self, x: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
-        """Move ``x`` by the tangent vector ``delta``; ``plus(x, 0) == x``."""
+        """Move ``x`` by a tangent vector (the retraction); a zero vector leaves it unchanged.
+
+        Args:
+            x (Tensor): a point on the manifold, flattened or in ``ambient_shape``.
+            delta (Tensor): a tangent vector of shape ``(tangent_size(x),)``.
+
+        Returns:
+            Tensor: the new point, with the shape of ``x``.
+        """
         raise NotImplementedError
 
     def minus(self, y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        """Tangent vector at ``x`` that reaches ``y``: ``plus(x, minus(y, x)) == y``.
+        """Tangent vector at ``x`` that reaches ``y``: the inverse of :meth:`plus`.
 
-        Optional: the solvers do not use it. Where ``plus`` wraps around (rotations by more
-        than pi), ``minus`` returns the shortest such vector.
+        ``plus(x, minus(y, x)) == y``. Optional: the solvers do not use it, but it measures errors between points. Where
+        ``plus`` wraps around (rotations by more than pi), ``minus`` returns the shortest such
+        vector.
+
+        Args:
+            y (Tensor): the target point.
+            x (Tensor): the base point.
+
+        Returns:
+            Tensor: a tangent vector of shape ``(tangent_size(x),)``.
         """
         raise NotImplementedError
 
     def entry_scale(self, x: torch.Tensor) -> torch.Tensor:
-        """The size each entry of the point ``x`` is computed at, shaped like ``x``.
+        """The size each entry of the point ``x`` is computed at.
 
         The solvers treat a change of an entry by a few units in the last place of this size
-        as rounding noise (when deciding that a Newton-like step no longer moves ``x``). The
-        default, ``|x|``, suits independent coordinates; structured points override it: the
+        as rounding noise, when they decide that a Newton-like step no longer moves ``x``. The
+        default, ``|x|``, suits independent coordinates. Structured points override it: the
         entries of a rotation matrix all carry an absolute error of about ``eps``, since its
-        rows have norm 1.
+        rows have norm 1. Optional: override it only for such points.
+
+        Args:
+            x (Tensor): a point on the manifold.
+
+        Returns:
+            Tensor: non-negative sizes, shaped like ``x``.
         """
         return x.abs()
 
 
 class Euclidean(Manifold):
-    """Plain vector space: ``plus(x, delta) = x + delta``.
+    """Plain vector space, with ``plus(x, delta) = x + delta``.
 
-    This is what the solvers do without a manifold. ``shape`` is only needed inside a
-    :class:`Product`, where each block must have a known size.
+    This is what the solvers do without a manifold.
+
+    Args:
+        shape (int or sequence of int, optional): shape of a point. Only needed inside a
+            :class:`piazzi.Product`, where each block must have a known size.
+            Default: ``None`` (any shape)
     """
 
     def __init__(self, shape: int | Sequence[int] | None = None):
@@ -142,10 +182,20 @@ class Euclidean(Manifold):
 
 
 class Subset(Manifold):
-    """A vector of ``size`` entries whose ``constant`` entries are held fixed.
+    """A vector with some entries held fixed, like Ceres Solver's ``SubsetManifold``.
 
-    Like Ceres's ``SubsetManifold``: the tangent vector holds the free entries, in order.
-    Inside a :class:`Product` this fixes part of a block, for example one camera intrinsic.
+    The tangent vector holds the free entries, in order. Inside a :class:`piazzi.Product`
+    this fixes part of a block, for example one camera intrinsic.
+
+    Args:
+        size (int): number of entries of a point, of shape ``(size,)``.
+        constant (sequence of int): indices of the entries held fixed.
+
+    Example::
+
+        >>> M = piazzi.Subset(3, constant=[1])
+        >>> M.plus(torch.zeros(3), torch.tensor([1.0, 2.0]))
+        tensor([1., 0., 2.])
     """
 
     def __init__(self, size: int, constant: Sequence[int]):
@@ -209,14 +259,37 @@ def _exp_coeffs(omega: torch.Tensor):
 
 
 def so3_hat(omega: torch.Tensor) -> torch.Tensor:
-    """Skew-symmetric matrix (..., 3, 3) with ``hat(w) @ v == cross(w, v)``."""
+    """Skew-symmetric (cross-product) matrix of a vector, with ``hat(w) @ v == cross(w, v)``.
+
+    Args:
+        omega (Tensor): vectors of shape ``(..., 3)``.
+
+    Returns:
+        Tensor: skew-symmetric matrices of shape ``(..., 3, 3)``.
+    """
     x, y, z = omega.unbind(-1)
     o = torch.zeros_like(x)
     return torch.stack([o, -z, y, z, o, -x, -y, x, o], -1).reshape(*omega.shape[:-1], 3, 3)
 
 
 def so3_exp(omega: torch.Tensor) -> torch.Tensor:
-    """Rotation matrix (..., 3, 3) of the rotation vector ``omega`` (..., 3) (Rodrigues)."""
+    """SO(3) exponential: the rotation matrix of a rotation vector (Rodrigues' formula).
+
+    Values and derivatives (forward and reverse mode) are finite everywhere, including at
+    ``omega = 0``.
+
+    Args:
+        omega (Tensor): rotation vectors (axis times angle, in radians) of shape ``(..., 3)``.
+
+    Returns:
+        Tensor: rotation matrices of shape ``(..., 3, 3)``.
+
+    Example::
+
+        >>> R = piazzi.so3_exp(torch.tensor([0.0, 0.0, torch.pi / 2]))  # a quarter turn about z
+        >>> torch.allclose(R @ torch.tensor([1.0, 0.0, 0.0]), torch.tensor([0.0, 1.0, 0.0]), atol=1e-6)
+        True
+    """
     A, B, _ = _exp_coeffs(omega)
     K = so3_hat(omega)
     eye = torch.eye(3, dtype=omega.dtype, device=omega.device)
@@ -244,12 +317,24 @@ _SMALL_SIN2 = 1e-3
 
 
 def so3_log(R: torch.Tensor) -> torch.Tensor:
-    """Rotation vector (..., 3) of the rotation matrix ``R`` (..., 3, 3), with angle in [0, pi].
+    """SO(3) logarithm: the rotation vector of a rotation matrix; inverts :func:`piazzi.so3_exp`.
 
     Three branches, all evaluated with safe inputs so derivatives stay finite: a series
     near the identity, ``theta / sin(theta) * vee(R - R^T) / 2`` for moderate angles, and,
-    for angles above 2 pi / 3 (where ``sin`` loses precision), the axis from the symmetric
-    part ``(R + R^T) / 2 - cos(theta) I = (1 - cos(theta)) a a^T``.
+    for angles above ``2 pi / 3`` (where ``sin`` loses precision), the axis from the
+    symmetric part ``(R + R^T) / 2 - cos(theta) I = (1 - cos(theta)) a a^T``.
+
+    Args:
+        R (Tensor): rotation matrices of shape ``(..., 3, 3)``.
+
+    Returns:
+        Tensor: rotation vectors of shape ``(..., 3)``, with angle in ``[0, pi]``.
+
+    Example::
+
+        >>> omega = torch.tensor([0.1, -0.2, 0.3], dtype=torch.float64)
+        >>> torch.allclose(piazzi.so3_log(piazzi.so3_exp(omega)), omega)
+        True
     """
     eye = torch.eye(3, dtype=R.dtype, device=R.device)
     v = 0.5 * _vee(R - R.mT)  # sin(theta) * axis
@@ -285,7 +370,14 @@ def _se3_V(omega):
 
 
 def se3_log(T: torch.Tensor) -> torch.Tensor:
-    """Twist ``(rho, omega)`` (..., 6) of the rigid transform ``T`` (..., 4, 4); inverts :func:`se3_exp`."""
+    """SE(3) logarithm: the twist of a rigid transform; inverts :func:`piazzi.se3_exp`.
+
+    Args:
+        T (Tensor): rigid transforms ``[[R, t], [0, 1]]`` of shape ``(..., 4, 4)``.
+
+    Returns:
+        Tensor: twists ``(rho, omega)`` of shape ``(..., 6)``, translation part first.
+    """
     omega = so3_log(T[..., :3, :3])
     rho = torch.linalg.solve(_se3_V(omega), T[..., :3, 3:])[..., 0]
     return torch.cat([rho, omega], -1)
@@ -304,19 +396,34 @@ def _make_se3(R, t):
 
 
 def se3_exp(xi: torch.Tensor) -> torch.Tensor:
-    """SE(3) exponential: 4 x 4 rigid transform (..., 4, 4) of the twist ``xi = (rho, omega)`` (..., 6).
+    """SE(3) exponential: the rigid transform of a twist.
 
-    The translation part is ``V(omega) @ rho`` (a screw motion), as in Sophus and PyPose.
+    The rotation is ``so3_exp(omega)`` and the translation ``V(omega) @ rho`` (a screw
+    motion), as in Sophus and PyPose.
+
+    Args:
+        xi (Tensor): twists ``(rho, omega)`` of shape ``(..., 6)``, translation part first.
+
+    Returns:
+        Tensor: rigid transforms ``[[R, t], [0, 1]]`` of shape ``(..., 4, 4)``.
+
+    Example::
+
+        >>> xi = torch.tensor([0.1, 0.2, 0.3, 0.0, 0.0, 0.5], dtype=torch.float64)
+        >>> torch.allclose(piazzi.se3_log(piazzi.se3_exp(xi)), xi)
+        True
     """
     return _make_se3(*_se3_exp_parts(xi, screw=True))
 
 
 class SO3(Manifold):
-    """Rotations stored as 3 x 3 matrices; 3 degrees of freedom.
+    """Rotations, stored as ``(3, 3)`` matrices, with 3 degrees of freedom.
 
-    ``side="right"`` (default): ``plus(R, w) = R @ so3_exp(w)``, a rotation in the body
-    frame. ``side="left"``: ``so3_exp(w) @ R``, a rotation in the world frame (the convention
-    of Ceres's ``QuaternionManifold`` and PyPose).
+    Args:
+        side (str, optional): ``"right"`` gives ``plus(R, w) = R @ so3_exp(w)``, a rotation
+            in the body frame. ``"left"`` gives ``so3_exp(w) @ R``, a rotation in the world
+            frame (the convention of Ceres Solver's ``QuaternionManifold`` and PyPose).
+            Default: ``"right"``
     """
 
     ambient_shape = (3, 3)
@@ -342,24 +449,40 @@ class SO3(Manifold):
 
 
 class SE3(Manifold):
-    """Rigid transforms stored as 4 x 4 matrices ``[[R, t], [0, 1]]``; 6 degrees of freedom.
+    """Rigid transforms, stored as ``(4, 4)`` matrices ``[[R, t], [0, 1]]``, with 6 degrees of freedom.
 
     The tangent vector is ``delta = (rho, omega)``: translation first, then a rotation
-    vector, as in Sophus and PyPose. It builds an increment ``D = [[so3_exp(omega), u], [0, 1]]``.
+    vector, as in Sophus and PyPose. It builds an increment
+    ``D = [[so3_exp(omega), u], [0, 1]]``.
 
     Args:
-        side: ``"right"`` (default) composes ``T @ D``: the increment is expressed in the
-            body frame (the frame ``T`` maps from). ``"left"`` composes ``D @ T``, in the
-            world frame.
-        retraction: ``"decoupled"`` (default) uses ``u = rho``, so rotation and translation
-            update independently. ``"exp"`` uses the true SE(3) exponential,
+        side (str, optional): ``"right"`` composes ``T @ D``: the increment is expressed in
+            the body frame (the frame ``T`` maps from). ``"left"`` composes ``D @ T``, in the
+            world frame. Default: ``"right"``
+        retraction (str, optional): ``"decoupled"`` uses ``u = rho``, so rotation and
+            translation update independently. ``"exp"`` uses the true SE(3) exponential,
             ``u = V(omega) @ rho`` (a screw motion). Both give the same Jacobian at
             ``delta = 0`` and the same Gauss-Newton step; they differ only at second order.
-        pivot: optional point ``c`` (3,) that ``omega`` rotates about, in the frame of the
-            increment (body frame for ``side="right"``). The increment becomes
-            ``C @ D @ C^-1`` with ``C`` the translation by ``c``. For registration, put it
-            at the centre of the object (the isocentre): rotating about a far-away origin
-            couples rotation and translation and slows convergence.
+            Default: ``"decoupled"``
+        pivot (Tensor or sequence of float, optional): a point ``c`` of shape ``(3,)`` that
+            ``omega`` rotates about, in the frame of the increment (the body frame for
+            ``side="right"``). The increment becomes ``C @ D @ C^-1``, with ``C`` the
+            translation by ``c``. For registration, put it at the centre of the object (the
+            isocentre): rotating about a far-away origin couples rotation and translation
+            and slows convergence. Default: ``None`` (the origin)
+
+    Example::
+
+        >>> P = torch.randn(10, 3, dtype=torch.float64, generator=torch.Generator().manual_seed(0))
+        >>> T_true = piazzi.se3_exp(torch.tensor([0.5, -0.2, 0.1, 0.1, 0.2, -0.3], dtype=torch.float64))
+        >>> Q = P @ T_true[:3, :3].T + T_true[:3, 3]
+        >>> res = piazzi.least_squares(
+        ...     lambda T: P @ T[:3, :3].T + T[:3, 3] - Q,
+        ...     torch.eye(4, dtype=torch.float64),
+        ...     manifold=piazzi.SE3(pivot=P.mean(0)),
+        ... )
+        >>> torch.allclose(res.x, T_true)
+        True
     """
 
     ambient_shape = (4, 4)
@@ -412,14 +535,24 @@ class SE3(Manifold):
 
 
 class Product(Manifold):
-    """Cartesian product of manifolds, stored as one flat vector (blocks concatenated).
+    """Cartesian product of manifolds, stored as one flat vector with the blocks concatenated.
 
-    Every factor needs a fixed ``ambient_shape`` (give :class:`Euclidean` a shape). Use
-    :meth:`join` to build ``x0`` and :meth:`split` inside the objective to unpack ``x``::
+    Use :meth:`join` to build ``x0`` and :meth:`split` inside the objective to unpack ``x``,
+    for example a pose plus camera intrinsics.
 
-        M = piazzi.Product(piazzi.SE3(), piazzi.Euclidean(1))
-        x0 = M.join(torch.eye(4), torch.ones(1))
-        res = piazzi.least_squares(lambda x: residuals(*M.split(x)), x0, manifold=M)
+    Args:
+        *manifolds (Manifold): the factors. Each needs a fixed ``ambient_shape`` (give
+            :class:`piazzi.Euclidean` a shape).
+
+    Example::
+
+        >>> M = piazzi.Product(piazzi.SE3(), piazzi.Euclidean(1))
+        >>> x0 = M.join(torch.eye(4), torch.ones(1))
+        >>> x0.shape
+        torch.Size([17])
+        >>> pose, scale = M.split(x0)
+        >>> pose.shape, scale.shape
+        (torch.Size([4, 4]), torch.Size([1]))
     """
 
     def __init__(self, *manifolds: Manifold):
@@ -436,11 +569,26 @@ class Product(Manifold):
         return x.reshape(-1).split(self.sizes)
 
     def split(self, x: torch.Tensor) -> list[torch.Tensor]:
-        """Unpack a flat point into its blocks, each in its factor's ``ambient_shape``."""
+        """Unpack a flat point into its blocks.
+
+        Args:
+            x (Tensor): a point of shape ``ambient_shape``.
+
+        Returns:
+            list of Tensor: one block per factor, each in its factor's ``ambient_shape``.
+        """
         return [b.reshape(m.ambient_shape) for m, b in zip(self.manifolds, self._blocks(x), strict=True)]
 
     def join(self, *blocks: torch.Tensor) -> torch.Tensor:
-        """Pack one block per factor into a flat point."""
+        """Pack one block per factor into a flat point.
+
+        Args:
+            *blocks (Tensor): one block per factor, of any shape with the factor's number of
+                elements.
+
+        Returns:
+            Tensor: the flat point, of shape ``ambient_shape``.
+        """
         if len(blocks) != len(self.manifolds):
             raise ValueError(f"expected {len(self.manifolds)} blocks, got {len(blocks)}")
         for m, b, n in zip(self.manifolds, blocks, self.sizes, strict=True):
