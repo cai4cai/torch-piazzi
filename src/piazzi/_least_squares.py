@@ -72,6 +72,10 @@ def least_squares_system(
     Returns:
         Callable: ``system(x) -> (loss, g, H)``, or ``(loss, g, H, aux)`` with ``has_aux``,
         with ``g`` of shape ``(n,)`` and ``H`` of shape ``(n, n)``.
+
+    See Also:
+        - :func:`piazzi.least_squares`: the high-level interface, which builds and solves this system
+          for you.
     """
     check_loss(loss, f_scale)
     if curvature not in ("irls", "scipy"):
@@ -170,6 +174,12 @@ def least_squares(
     Returns:
         OptimizeResult: as for :func:`piazzi.gauss_newton`. ``result.fun`` is the cost, not
         the residuals.
+
+    See Also:
+        - :func:`piazzi.gauss_newton`: the method this runs (``method="lm"`` or ``"gn"``), which
+          documents the other keyword arguments.
+        - :func:`piazzi.least_squares_system`: the normal equations this builds from ``fun``.
+        - :func:`piazzi.scipy.least_squares`: the same problem with SciPy's solvers.
 
     Example::
 

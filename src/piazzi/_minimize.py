@@ -78,6 +78,10 @@ def minimize(
     Returns:
         OptimizeResult: the method's result; see :func:`piazzi.lbfgs_armijo`.
 
+    See Also:
+        - :func:`piazzi.lbfgs_armijo`: the default method, which documents its ``options``.
+        - :func:`piazzi.scipy.minimize`: the same problem with SciPy's methods.
+
     Example::
 
         >>> def rosenbrock(x):

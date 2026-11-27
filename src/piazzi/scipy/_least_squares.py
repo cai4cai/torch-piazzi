@@ -84,6 +84,9 @@ def least_squares(
         ``n_system`` Jacobian evaluations (``jac="autodiff"`` or a callable).
         ``converged`` is SciPy's ``success``, and ``raw`` is SciPy's own result.
 
+    See Also:
+        - :func:`piazzi.least_squares`: the native solver with the same calling convention.
+
     Example::
 
         >>> t = torch.linspace(0, 4, 40, dtype=torch.float64)

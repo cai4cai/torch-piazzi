@@ -93,6 +93,9 @@ def minimize(
         SciPy did not evaluate there last, the wrapper evaluates ``fun`` once more, which
         the counts do not include.
 
+    See Also:
+        - :func:`piazzi.minimize`: the native interface with the same calling convention.
+
     Example::
 
         >>> def rosenbrock(x):
