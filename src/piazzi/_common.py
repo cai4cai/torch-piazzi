@@ -40,9 +40,11 @@ class OptimizeResult:
     """Outcome of a solver run.
 
     ``n_fun_grad``: value + gradient evaluations, ``n_fun``: value-only evaluations,
-    ``n_system``: normal-equation evaluations (Gauss-Newton / Levenberg-Marquardt).
-    ``converged`` is True when the run stopped on ``step_tol`` or at a zero gradient;
-    ``message`` says why it stopped.
+    ``n_system``: evaluations of second-order information (the normal equations of
+    Gauss-Newton / Levenberg-Marquardt, or SciPy's Hessian or Hessian-vector products).
+    ``converged`` is True when the run stopped at a minimiser to working precision: on a step
+    or decrease below tolerance (``step_tol``, rounding noise, or an optimiser's own
+    tolerances), at a zero gradient, or with no free parameters. ``message`` says which.
     ``raw`` holds the backend's own result object for third-party wrappers (``piazzi.scipy``),
     and is None for the native solvers.
     """

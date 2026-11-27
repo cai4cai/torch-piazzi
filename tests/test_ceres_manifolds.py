@@ -448,7 +448,8 @@ def test_rotation_matrix_matches_matrix_exp_for_large_angles():
     theta = (2 * torch.arange(10000, dtype=D) * 0.0011 - 1) * math.pi
     axis = uniform(10000, 3, g=g)
     w = theta[:, None] * axis / axis.norm(dim=-1, keepdim=True)
-    torch.testing.assert_close(piazzi.so3_exp(w), torch.linalg.matrix_exp(hat(w)), atol=1e-12, rtol=0)
+    # 1e-10: torch 2.1's matrix_exp (the reference) differs from later versions by up to 4.4e-11 at 21 pi.
+    torch.testing.assert_close(piazzi.so3_exp(w), torch.linalg.matrix_exp(hat(w)), atol=1e-10, rtol=0)
 
 
 @pytest.mark.parametrize("exponent", [*range(-2, -32, -4), -31, -100, -200, -306])

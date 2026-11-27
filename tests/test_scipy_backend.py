@@ -48,7 +48,7 @@ def test_matches_native_least_squares(loss, outlier_data):
     assert torch.allclose(res.x, ref.x, atol=1e-6)
     assert torch.allclose(res.fun, ref.fun, rtol=1e-8)
     assert res.raw.cost == pytest.approx(res.fun.item())
-    assert res.n_fun == res.raw.nfev and res.n_system == res.raw.njev
+    assert res.n_fun == res.raw.nfev and res.n_system == res.raw.njev  # autodiff: SciPy's counts are the calls
 
 
 @needs_scipy
@@ -155,3 +155,63 @@ def test_callable_loss_runs_in_x0_dtype(outlier_data):
 
     pzs.least_squares(residuals(t, y), torch.tensor([1.0, 0.5]), loss=loss, f_scale=0.1)
     assert seen == {torch.float32}
+
+
+# --- Regression tests from the code review of the SciPy wrappers ----------------------------
+
+
+def counting(fun):
+    def counted(*a):
+        counted.calls += 1
+        return fun(*a)
+
+    counted.calls = 0
+    return counted
+
+
+@needs_scipy
+@pytest.mark.parametrize("method", ["trf", "dogbox", "lm"])
+@pytest.mark.parametrize("jac", ["autodiff", "2-point"])
+def test_least_squares_counts_every_call(method, jac, outlier_data):
+    """SciPy's nfev leaves out finite-difference calls for trf and dogbox: count them all."""
+    fun = counting(residuals(*outlier_data))
+    res = pzs.least_squares(fun, torch.tensor([1.0, 0.5], dtype=torch.float64), jac=jac, method=method)
+    assert res.converged, res.message
+    assert res.n_fun + res.n_system == fun.calls  # a forward-mode Jacobian is one call of fun
+    assert (res.n_system == 0) == (jac == "2-point")
+
+
+@needs_scipy
+def test_least_squares_scalar_and_multidimensional_bounds():
+    x0 = torch.full((2, 2), 0.5, dtype=torch.float64)
+    lo, hi = torch.tensor(0.0, dtype=torch.float64), torch.tensor(1.0, dtype=torch.float64)
+    for bounds in [(lo, hi), (0.0, hi), (torch.zeros(2, 2), torch.ones(2, 2))]:
+        res = pzs.least_squares(lambda x: (x - 2).reshape(-1), x0, bounds=bounds, x_scale=torch.tensor(2.0))
+        assert torch.allclose(res.x, torch.ones(2, 2, dtype=torch.float64)), bounds
+    import scipy.optimize
+
+    res = pzs.least_squares(lambda x: (x - 2).reshape(-1), x0, bounds=scipy.optimize.Bounds(torch.zeros(2, 2), 1.0))
+    assert torch.allclose(res.x, torch.ones(2, 2, dtype=torch.float64))
+
+
+@needs_scipy
+def test_least_squares_callback_gets_iteration_info_and_can_stop(outlier_data):
+    import inspect
+
+    import scipy.optimize
+
+    if "callback" not in inspect.signature(scipy.optimize.least_squares).parameters:
+        with pytest.raises(TypeError, match="SciPy 1.16"):
+            pzs.least_squares(residuals(*outlier_data), torch.tensor([1.0, 0.5]), callback=print)
+        return
+    seen = []
+
+    def callback(info):
+        seen.append(info)
+        return info.iteration == 2
+
+    res = pzs.least_squares(residuals(*outlier_data), torch.tensor([1.0, 0.5], dtype=torch.float64), callback=callback)
+    assert len(seen) == 3 and not res.converged
+    assert all(isinstance(info, piazzi.IterationInfo) for info in seen)
+    assert seen[-1].fun.item() == pytest.approx(res.fun.item())
+    assert seen[-1].n_fun + seen[-1].n_system <= res.n_fun + res.n_system

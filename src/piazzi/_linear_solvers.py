@@ -72,17 +72,17 @@ def cg_solver(
 
     .. _torchsparsegradutils: https://github.com/cai4cai/torchsparsegradutils
     """
-    try:
-        from torchsparsegradutils.utils import linear_cg
-    except ImportError as err:  # pragma: no cover - exercised only without the extra
-        raise ImportError(
-            'cg_solver needs torchsparsegradutils: pip install "piazzi[sparse]", '
-            "or pass another linear_solver (for example piazzi.dense_solver)"
-        ) from err
     if not tol > 0:
         raise ValueError(f"tol must be positive, got {tol!r}")
     if not (preconditioner is None or preconditioner == "jacobi" or callable(preconditioner)):
         raise ValueError(f"preconditioner must be 'jacobi', a callable or None, got {preconditioner!r}")
+    try:
+        from torchsparsegradutils.utils import linear_cg
+    except ImportError as err:
+        raise ImportError(
+            'cg_solver needs torchsparsegradutils: pip install "piazzi[sparse]", '
+            "or pass another linear_solver (for example piazzi.dense_solver)"
+        ) from err
 
     def solve(H, g, damping):
         if preconditioner == "jacobi":

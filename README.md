@@ -23,7 +23,7 @@ As in SciPy, `loss` is `"linear"` (the default), `"huber"`, `"soft_l1"`, `"cauch
 
 The gradient is `Jᵀ(ρ′ ⊙ r)`. By default the curvature model is `Jᵀ diag(ρ′) J` (`curvature="irls"`), the iteratively reweighted least-squares model that Ceres Solver also uses for these losses. `curvature="scipy"` uses SciPy's `max(ρ′ + 2ρ″z, ε)` weights instead. It is more accurate for inliers but nearly singular when most residuals start out as outliers. Both models converge to the same minimiser.
 
-The normal equations are solved in float64 on the CPU by default, so the objective itself can run in float32 on a GPU or MPS device. `damping="marquardt"` scales the Levenberg-Marquardt damping (and the Gauss-Newton ridge) by `diag(H)`, as Ceres does. Use it when parameters have very different units; it plays the role of SciPy's `x_scale="jac"`. Every solver returns an `OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. You can pass `callback(info)` to record the iterates and the evaluations so far (`info.n_fun_grad`, `info.n_fun`, `info.n_system`), or to stop early by returning `True`.
+The normal equations are solved in float64 on the CPU by default, so the objective itself can run in float32 on a GPU or MPS device. `damping="marquardt"` scales the Levenberg-Marquardt damping (and the Gauss-Newton ridge) by `diag(H)`, as Ceres does. Use it when parameters have very different units; it plays the role of SciPy's `x_scale="jac"`. Every solver returns an `OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. `converged` means a minimiser was reached to working precision; in float32, Gauss-Newton, Levenberg-Marquardt and L-BFGS also recognise that once the predicted decrease falls below the rounding noise of the loss. You can pass `callback(info)` to record the iterates and the evaluations so far (`info.n_fun_grad`, `info.n_fun`, `info.n_system`), or to stop early by returning `True`.
 
 ### Manifolds: poses and rotations
 
@@ -80,8 +80,10 @@ Each iteration is one optimiser step, so `callback` sees every iterate. `torch.o
 
 | Function | Backend | Notes |
 |---|---|---|
-| `piazzi.scipy.least_squares(fun, x0, loss=..., f_scale=...)` | [`scipy.optimize.least_squares`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html) | `fun` and the result use tensors. The Jacobian comes from forward-mode autodiff by default, as in `piazzi.least_squares`; `jac` can also be a PyTorch callable or SciPy's `"2-point"` / `"3-point"`. A PyTorch `loss` callable is supported, with derivatives from autograd. Other keyword arguments (`method`, `bounds`, `ftol`, ...) go to SciPy, and `result.raw` holds SciPy's own result. |
-| `piazzi.scipy.minimize(fun, x0, method=..., options=...)` | [`scipy.optimize.minimize`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html) | Same calling convention as `piazzi.minimize` (except `manifold=`, which the SciPy wrappers do not support), with any SciPy method. By default each evaluation returns the value and its autograd gradient together. `hess="autodiff"` / `hessp="autodiff"` give exact Hessians or Hessian-vector products for Newton-CG and the trust-region methods. `bounds` may hold tensors, and other keyword arguments (`tol`, `constraints`, ...) go to SciPy. |
+| `piazzi.scipy.least_squares(fun, x0, loss=..., f_scale=...)` | [`scipy.optimize.least_squares`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html) | `fun` and the result use tensors. The Jacobian comes from forward-mode autodiff by default, as in `piazzi.least_squares`; `jac` can also be a PyTorch callable or SciPy's `"2-point"` / `"3-point"`. A PyTorch `loss` callable is supported, with derivatives from autograd. `bounds`, `x_scale` and `diff_step` may hold tensors. `callback(info)` works as for the native solvers (SciPy 1.16 or later). Other keyword arguments (`method`, `ftol`, ...) go to SciPy, and `result.raw` holds SciPy's own result. |
+| `piazzi.scipy.minimize(fun, x0, method=..., options=...)` | [`scipy.optimize.minimize`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html) | Same calling convention as `piazzi.minimize` (except `manifold=`, which the SciPy wrappers do not support), with any SciPy method and SciPy's `options`: `callback(info)` gets an `IterationInfo` and can stop the run by returning `True`. By default each evaluation returns the value and its autograd gradient together; gradient-free methods (Nelder-Mead, Powell, COBYLA, COBYQA) get no gradient. `hess="autodiff"` / `hessp="autodiff"` give exact Hessians or Hessian-vector products for Newton-CG and the trust-region methods. `bounds` may hold tensors, and other keyword arguments (`tol`, `constraints`, ...) go to SciPy. |
+
+The wrappers count the calls they make rather than relaying SciPy's `nfev` / `njev` / `nhev`, so finite-difference evaluations are included in `n_fun` and Hessian (or Hessian-vector product) evaluations appear in `n_system`.
 
 ```bash
 pip install "piazzi[scipy] @ git+https://github.com/cai4cai/torch-piazzi"
@@ -146,7 +148,11 @@ uv run jupyter lab notebooks/
 uv sync
 uv run pytest
 uv run ruff check .
+uv run ruff format --check .
+uv run python scripts/execute_notebooks.py
 ```
+
+`tests/test_devices.py` runs the solvers on every available device: always the CPU, plus CUDA or Apple MPS when present (in float32 only on MPS, which has no float64). CI is CPU-only, so run `uv run pytest tests/test_devices.py` on a Mac or a CUDA machine after touching device or dtype handling. See [AGENTS.md](AGENTS.md) for the conventions contributors (human or AI) are expected to follow.
 
 ## Roadmap
 

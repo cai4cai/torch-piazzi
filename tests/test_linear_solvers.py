@@ -1,3 +1,6 @@
+import importlib.util
+import sys
+
 import pytest
 import torch
 
@@ -6,6 +9,10 @@ from piazzi._linear_solvers import diagonal, matvec
 
 D = torch.float64
 CSR_BETA = pytest.mark.filterwarnings("ignore:Sparse CSR tensor support is in beta:UserWarning")
+# cg_solver, the default solver for a sparse H, needs the optional "sparse" extra.
+NEEDS_CG = pytest.mark.skipif(
+    importlib.util.find_spec("torchsparsegradutils") is None, reason="needs torchsparsegradutils (piazzi[sparse])"
+)
 
 
 def exp_problem():
@@ -32,6 +39,7 @@ def test_diagonal_and_matvec_sparse(layout):
     torch.testing.assert_close(matvec(Hs, v), H @ v)
 
 
+@NEEDS_CG
 @CSR_BETA
 @pytest.mark.parametrize("preconditioner", ["jacobi", None, "block"])
 def test_cg_solver_matches_dense(preconditioner):
@@ -49,6 +57,7 @@ def test_cg_solver_matches_dense(preconditioner):
     torch.testing.assert_close(piazzi.dense_solver(H.to_sparse_csr(), g, damping), expected)
 
 
+@NEEDS_CG
 def test_cg_solver_inexact_step_is_silent():
     H, g = spd(30, 2), torch.ones(30, dtype=D)
     d = piazzi.cg_solver(tol=1e-14, max_iter=2)(H.to_sparse_coo(), g, torch.zeros(30, dtype=D))
@@ -60,6 +69,7 @@ def test_cg_solver_rejects_bad_preconditioner():
         piazzi.cg_solver(preconditioner="ilu")
 
 
+@NEEDS_CG
 @CSR_BETA
 @pytest.mark.parametrize("method", ["lm", "gn"])
 @pytest.mark.parametrize("damping", ["identity", "marquardt"])
@@ -125,6 +135,7 @@ def test_cg_solver_rejects_non_positive_tol():
         piazzi.cg_solver(tol=0.0)
 
 
+@NEEDS_CG
 def test_cg_solver_breakdown_falls_back_to_gradient_step():
     H = torch.zeros(3, 3, dtype=D).to_sparse_coo()  # damped system is singular: p^T A p = 0
     g = torch.tensor([1.0, -2.0, 0.5], dtype=D)
@@ -145,3 +156,10 @@ def test_float64_problem_with_float32_solve_on_mps():
     res = piazzi.least_squares(fun, x0, solve_device="mps", solve_dtype=torch.float32)
     assert res.converged, res.message
     torch.testing.assert_close(res.x, torch.tensor([2.5, 1.3], dtype=D), atol=1e-4, rtol=0)
+
+
+def test_cg_solver_without_the_extra_says_how_to_install_it(monkeypatch):
+    monkeypatch.setitem(sys.modules, "torchsparsegradutils", None)  # makes the import fail
+    monkeypatch.setitem(sys.modules, "torchsparsegradutils.utils", None)
+    with pytest.raises(ImportError, match=r"piazzi\[sparse\]"):
+        piazzi.cg_solver()
