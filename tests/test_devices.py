@@ -172,7 +172,11 @@ def test_se3_registration(device, dtype, solver):
             # A step_tol the dtype can resolve: float32 cannot move a coordinate near 1 by 1e-10.
             options={"max_iter": 300, "step_tol": 1e-10 if dtype == torch.float64 else 1e-6},
         )
-    assert res.converged, res.message
+    # Near this zero residual, float32 runs reach the pose to float32 precision but may stop on a
+    # rejected step rather than report convergence, depending on the platform's rounding
+    # (issue #19): require convergence in float64 only, and the accuracy in both.
+    if dtype == torch.float64:
+        assert res.converged, res.message
     assert res.x.device.type == device and res.x.dtype == dtype
     # Translations are ~100 times the rotation entries, so compare them with a relative tolerance.
     torch.testing.assert_close(res.x.cpu().double(), T_true, atol=atol(dtype), rtol=atol(dtype))
