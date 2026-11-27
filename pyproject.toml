@@ -1,14 +1,31 @@
 [project]
 name = "piazzi"
 dynamic = ["version"]
-description = "Deterministic PyTorch solvers for small nonlinear fitting problems: L-BFGS with Armijo line search, Gauss-Newton, Levenberg-Marquardt."
+description = "Deterministic PyTorch solvers for nonlinear fitting problems: L-BFGS with Armijo line search, Gauss-Newton, Levenberg-Marquardt."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "CAI4CAI" }]
 requires-python = ">=3.10"
 dependencies = ["torch>=2.1"]
-keywords = ["pytorch", "optimisation", "least-squares", "gauss-newton", "levenberg-marquardt", "l-bfgs", "registration"]
+# Kept in sync with the GitHub repository topics.
+keywords = [
+    "autodiff",
+    "bundle-adjustment",
+    "gauss-newton",
+    "image-registration",
+    "lbfgs",
+    "levenberg-marquardt",
+    "lie-groups",
+    "nonlinear-least-squares",
+    "optimization",
+    "pose-estimation",
+    "python",
+    "pytorch",
+    "quasi-newton",
+    "scipy",
+    "se3",
+]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Science/Research",

@@ -1,8 +1,8 @@
 # piazzi
 
-**Deterministic PyTorch solvers for small nonlinear fitting problems.**
+**Deterministic PyTorch solvers for nonlinear fitting problems.**
 
-`piazzi` targets fitting problems such as pose or camera registration, curve fitting and bundle adjustment, where there are few parameters (or a sparse structure), every objective evaluation is expensive (rendering, for example), and you want each evaluation to count. `torch.optim` targets stochastic training instead; `piazzi` targets full-batch, curvature-aware fitting.
+`piazzi` targets fitting problems such as pose or camera registration, curve fitting and bundle adjustment, where every objective evaluation is expensive (rendering, for example) and you want each evaluation to count. `torch.optim` targets stochastic training instead; `piazzi` targets full-batch, curvature-aware fitting.
 
 > Named after Giuseppe Piazzi, who discovered the dwarf planet Ceres in 1801. Gauss recovered Ceres from Piazzi's observations by inventing least squares.
 
