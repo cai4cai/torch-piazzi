@@ -61,3 +61,11 @@ related-work
 contributing
 changelog
 ```
+
+```{toctree}
+:hidden:
+:caption: Project links
+
+GitHub repository <https://github.com/cai4cai/torch-piazzi>
+Issues <https://github.com/cai4cai/torch-piazzi/issues>
+```
