@@ -9,7 +9,7 @@ import scipy.optimize
 import torch
 
 from .._common import OptimizeResult, check_x0, quiet_jvp_warnings
-from ..losses import Loss, check_loss, rho_and_derivatives
+from .._losses import Loss, check_loss, rho_and_derivatives
 from ._convert import n2t, t2n
 
 __all__ = ["least_squares"]

@@ -8,7 +8,7 @@ from typing import Any
 import torch
 
 from ._common import Callback, OptimizeResult
-from .lbfgs import lbfgs_armijo
+from ._lbfgs import lbfgs_armijo
 
 __all__ = ["MINIMIZE_METHODS", "minimize"]
 

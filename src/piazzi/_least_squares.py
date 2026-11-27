@@ -7,8 +7,8 @@ from collections.abc import Callable
 import torch
 
 from ._common import OptimizeResult, quiet_jvp_warnings
-from .gauss_newton import gauss_newton
-from .losses import Loss, check_loss, rho_and_derivatives, robust_cost
+from ._gauss_newton import gauss_newton
+from ._losses import Loss, check_loss, rho_and_derivatives, robust_cost
 
 __all__ = ["least_squares", "least_squares_system"]
 
