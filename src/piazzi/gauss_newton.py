@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable
 
 import torch
 
-from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree
+from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, quiet_jvp_warnings
 from .losses import Loss, check_loss, rho_and_derivatives, robust_cost
 
 __all__ = ["gauss_newton", "least_squares", "least_squares_system", "levenberg_marquardt"]
@@ -63,12 +62,7 @@ def least_squares_system(
                 return r.reshape(-1), (r.reshape(-1), aux)
             return out.reshape(-1), (out.reshape(-1),)
 
-        with warnings.catch_warnings():
-            # The first forward-mode AD call makes torch load its JVP decompositions, which
-            # call the deprecated torch.jit.script internally in torch 2.15 and earlier. Fixed
-            # upstream by https://github.com/pytorch/pytorch/pull/203621 (landed 2026-11-09,
-            # after 2.15.0); drop this filter once the minimum torch version includes it.
-            warnings.filterwarnings("ignore", r"`torch\.jit\.script` is deprecated", FutureWarning, r"torch\.jit")
+        with quiet_jvp_warnings():
             J, extra = torch.func.jacfwd(flat, has_aux=True)(x.reshape(-1))
         r, aux = extra[0], (extra[1] if has_aux else None)
         if robust:

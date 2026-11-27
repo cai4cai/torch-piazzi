@@ -24,6 +24,24 @@ The gradient is `Jᵀ(ρ′ ⊙ r)`. By default the curvature model is `Jᵀ dia
 
 The normal equations are solved in float64 on the CPU by default, so the objective itself can run in float32 on a GPU or MPS device. Every solver returns an `OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. You can pass `callback(info)` to record the iterates or to stop early by returning `True`.
 
+## Third-party backends
+
+`piazzi` also has thin wrappers around third-party solvers, so you can compare backends on the same problem. Each wrapper takes PyTorch functions, converts between PyTorch and the backend's arrays, and returns the same `OptimizeResult` as the native solvers. The backends are optional dependencies, and `import piazzi` does not load them.
+
+| Function | Backend | Notes |
+|---|---|---|
+| `piazzi.scipy.least_squares(fun, x0, loss=..., f_scale=...)` | [`scipy.optimize.least_squares`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html) | `fun` and the result use tensors. The Jacobian comes from forward-mode autodiff by default, as in `piazzi.least_squares`; `jac` can also be a PyTorch callable or SciPy's `"2-point"` / `"3-point"`. A PyTorch `loss` callable is supported, with derivatives from autograd. Other keyword arguments (`method`, `bounds`, `ftol`, ...) go to SciPy, and `result.raw` holds SciPy's own result. |
+
+```bash
+pip install "piazzi[scipy] @ git+https://github.com/cai4cai/torch-piazzi"
+```
+
+```python
+import piazzi.scipy
+
+res = piazzi.scipy.least_squares(fun, x0, loss="cauchy", f_scale=0.1)  # same fun and x0 as piazzi.least_squares
+```
+
 ## Example
 
 ```python
