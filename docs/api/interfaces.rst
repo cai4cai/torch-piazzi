@@ -5,7 +5,8 @@ High-level interfaces
 
 The SciPy-style entry points, and where to start. They take the objective in its most natural
 form (residuals, or a scalar), choose a method by name and pass that method's settings
-through. Each one runs a :doc:`method-specific solver <methods>`, which documents every
+through: :func:`least_squares` forwards its other keyword arguments, and :func:`minimize`
+forwards ``options``. The :doc:`method-specific solvers <methods>` they run document every
 setting.
 
 .. autofunction:: least_squares
