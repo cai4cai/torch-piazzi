@@ -107,7 +107,8 @@ def gauss_newton(
         return loss.detach()
 
     def host(g, H):
-        return g.to(solve_device, solve_dtype), H.to(solve_device, solve_dtype)
+        # Move first, then cast: casting on the source device fails where it lacks float64 (MPS).
+        return g.to(solve_device).to(solve_dtype), H.to(solve_device).to(solve_dtype)
 
     def solve(Hc, gc, lam):
         A = Hc + lam * torch.eye(Hc.shape[0], dtype=Hc.dtype, device=Hc.device)
