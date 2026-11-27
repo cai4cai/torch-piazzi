@@ -83,6 +83,16 @@ def gauss_newton(
         # Move first, then cast: casting on the source device fails where it lacks float64 (MPS).
         return g.to(solve_device).to(solve_dtype), H.to(solve_device).to(solve_dtype)
 
+    def at_noise_floor(f_new, f_val, step):
+        # A step below step_tol whose value went up by no more than rounding noise: we are at a
+        # minimiser to working precision, so the step counts as accepted (and converged).
+        noise = 8 * torch.finfo(f.dtype).eps * abs(f_val)
+        return step < step_tol and f_new <= f_val + noise
+
+    def armijo_ok(fn, f_val, t, gtd, d):
+        # `<=` (rather than `not >`) so that a NaN trial value counts as insufficient decrease.
+        return fn <= f_val + c1 * t * gtd or at_noise_floor(fn, f_val, t * d.abs().max().item())
+
     def solve(Hc, gc, lam):
         A = Hc + lam * torch.eye(Hc.shape[0], dtype=Hc.dtype, device=Hc.device)
         d = torch.linalg.solve(A, -gc)
@@ -121,13 +131,13 @@ def gauss_newton(
             x_new = x + dx
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             n_bt = 0
-            # Written as `not <=` so that a NaN trial value counts as insufficient decrease.
-            while not f_new.item() <= f_val + c1 * t * gtd and n_bt < max_backtracks:
+
+            while not armijo_ok(f_new.item(), f_val, t, gtd, d) and n_bt < max_backtracks:
                 t *= 0.5
                 x_new = x + t * dx
                 f_new, g_new = eval_value(x_new), None
                 n_bt += 1
-            if not f_new.item() <= f_val + c1 * t * gtd:
+            if not armijo_ok(f_new.item(), f_val, t, gtd, d):
                 notify(it, f_start, False)
                 return result(it + 1, False, "line search failed")
             if g_new is None:
@@ -152,8 +162,10 @@ def gauss_newton(
             f_new, have_sys = eval_value(x_new), False
         rho = (f_val - f_new.item()) / max(pred, 1e-20)
         # At a minimiser the model predicts no decrease (pred = 0), so the gain ratio is 0 and
-        # would reject the zero step forever; accept it when the value did not go up.
-        if rho > 0 or (pred <= 0 and f_new.item() <= f_val):
+        # would reject the zero step forever; accept it when the value did not go up. Likewise
+        # a tiny step whose decrease is lost to rounding (pred ~ 1e-32) is accepted.
+        fn = f_new.item()
+        if rho > 0 or (pred <= 0 and fn <= f_val) or at_noise_floor(fn, f_val, d.abs().max().item()):
             if not have_sys:
                 f_new, aux_new, g_new, H_new = eval_sys(x_new)
             lam *= max(1.0 / 3.0, 1.0 - (2.0 * rho - 1.0) ** 3)

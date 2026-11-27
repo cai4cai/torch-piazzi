@@ -91,15 +91,21 @@ def test_least_squares_starts_at_optimum(method):
 
 
 @pytest.mark.parametrize("method", ["lm", "gn"])
-def test_least_squares_zero_step_at_nonzero_cost_minimiser(method):
-    """A minimiser with nonzero residuals where g is tiny but not exactly 0 still converges."""
+@pytest.mark.parametrize("k", range(-4, 5))
+def test_least_squares_zero_step_at_nonzero_cost_minimiser(method, k):
+    """Starting within rounding of a minimiser with nonzero residuals still converges.
+
+    The exact minimiser is (0.4, 0). Starting a few ulp away, every LM step is ~1e-16 and its
+    decrease is lost to rounding; such steps used to be rejected until max_rejections (seen in
+    CI on Linux, where lstsq returned (0.4, 1.24e-16)).
+    """
     t = torch.linspace(0, 1, 5, dtype=F64)
     y = torch.tensor([0.0, 1.0, 0.0, 1.0, 0.0], dtype=F64)
     fun = lambda th: th[0] + th[1] * t - y  # noqa: E731
-    exact = torch.linalg.lstsq(torch.stack([torch.ones_like(t), t], 1), y).solution
-    res = piazzi.least_squares(fun, exact, method=method)
-    # LM may first reject a few steps whose decrease is lost to rounding (pred ~ 1e-32).
-    assert torch.allclose(res.x, exact, atol=1e-12) and res.converged, res.message
+    res = piazzi.least_squares(fun, torch.tensor([0.4, k * 3.1e-17], dtype=F64), method=method)
+    assert torch.allclose(res.x, torch.tensor([0.4, 0.0], dtype=F64), atol=1e-12)
+    assert res.converged, res.message
+    assert res.n_iter <= 2
 
 
 @pytest.mark.parametrize("method", ["lm", "gn"])
