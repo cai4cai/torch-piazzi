@@ -141,6 +141,7 @@ def lbfgs_armijo(
         n_bt = 0
         while not armijo_ok(f_new.item(), f_val + c1 * t * gtd) and n_bt < max_backtracks:
             reject(pending)
+            pending = None  # free the rejected trial's graph before the next forward pass
             denom = 2.0 * (f_new.item() - f_val - gtd * t)
             t_q = -gtd * t * t / denom if denom > 0 else 0.5 * t
             t = min(max(t_q, 0.1 * t), 0.5 * t)

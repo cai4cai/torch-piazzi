@@ -1,4 +1,6 @@
-"""Evaluation counts in ``IterationInfo``."""
+"""Evaluation counts in ``IterationInfo``, and what ``lbfgs_armijo``'s line search evaluates."""
+
+import weakref
 
 import pytest
 import torch
@@ -83,3 +85,17 @@ def test_lbfgs_armijo_value_fun_counts():
     # never runs; backtracking calls value_fun, and an accepted backtracked point calls fun.
     assert calls["value"] > 0
     assert calls["fun"] + calls["value"] == res.n_fun_grad + res.n_fun
+
+
+def test_lbfgs_armijo_frees_rejected_graphs():
+    """No earlier trial's graph is still alive when the next evaluation starts."""
+    losses, alive_at_call = [], []
+
+    def fun(x):
+        alive_at_call.append(sum(ref() is not None for ref in losses))
+        loss = rosen(x)
+        losses.append(weakref.ref(loss))  # the graph lives as long as the loss tensor
+        return loss
+
+    res = piazzi.minimize(fun, X0, options={"max_iter": 500})
+    assert res.n_fun > 0 and max(alive_at_call) == 0
