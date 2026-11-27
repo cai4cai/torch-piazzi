@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 import torch
 
-from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract
+from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract, transfer
 from ._linear_solvers import LinearSolver, cg_solver, dense_solver, diagonal, is_sparse, matvec
 from ._manifolds import Manifold
 
@@ -107,9 +107,8 @@ def gauss_newton(
         counts["f"] += 1
         return loss.detach()
 
-    def host(g, H):
-        # Move first, then cast: casting on the source device fails where it lacks float64 (MPS).
-        return g.to(solve_device).to(solve_dtype), H.to(solve_device).to(solve_dtype)
+    def host(t):
+        return transfer(t, solve_device, solve_dtype)
 
     def at_noise_floor(f_new, f_val, step):
         # A step below step_tol whose value went up by no more than rounding noise: we are at a
@@ -159,7 +158,7 @@ def gauss_newton(
     f, aux, g, H = eval_sys(x)
     if not torch.isfinite(f):
         return result(0, False, "objective is not finite at x0")
-    gc, Hc = host(g, H)
+    gc, Hc = host(g), host(H)
     lam = tau * (diagonal(Hc).max().item() if damping == "identity" else 1.0)
     nu, rejections, have_sys = 2.0, 0, True
     for it in range(max_iter):
@@ -170,7 +169,7 @@ def gauss_newton(
             d = solve(Hc, gc, gn_ridge * (diagonal(Hc).mean().item() if damping == "identity" else 1.0))
             gtd = torch.dot(gc, d).item()
             t = 1.0
-            dx = d.to(x)
+            dx = transfer(d, x.device, x.dtype)
             x_new = retract(manifold, x, dx)
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             n_bt = 0
@@ -187,7 +186,7 @@ def gauss_newton(
                 f_new, aux_new, g_new, H_new = eval_sys(x_new)
             step = t * d.abs().max().item()
             x, f, aux = x_new, f_new, aux_new
-            gc, Hc = host(g_new, H_new)
+            gc, Hc = host(g_new), host(H_new)
             stop = notify(it, f_start, True)
             if step < step_tol:
                 return result(it + 1, True, "step below step_tol")
@@ -197,7 +196,7 @@ def gauss_newton(
         # Levenberg-Marquardt.
         d = solve(Hc, gc, lam)
         pred = -(torch.dot(gc, d) + 0.5 * torch.dot(d, matvec(Hc, d))).item()
-        x_new = retract(manifold, x, d.to(x))
+        x_new = retract(manifold, x, transfer(d, x.device, x.dtype))
         if rejections == 0:  # after an accepted step the trial is usually accepted too
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             have_sys = True
@@ -217,7 +216,7 @@ def gauss_newton(
             nu, rejections = 2.0, 0
             step = d.abs().max().item()
             x, f, aux = x_new, f_new, aux_new
-            gc, Hc = host(g_new, H_new)
+            gc, Hc = host(g_new), host(H_new)
             stop = notify(it, f_start, True)
             if step < step_tol:
                 return result(it + 1, True, "step below step_tol")

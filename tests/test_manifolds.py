@@ -297,3 +297,28 @@ def test_euclidean_manifold_matches_default():
     b = piazzi.least_squares(fun, x0, manifold=piazzi.Euclidean())
     torch.testing.assert_close(a.x, b.x)
     assert a.n_iter == b.n_iter
+
+
+def test_subset_plus_scales_linearly():
+    """plus must not build a size x size matrix: this block would need 320 GB as one."""
+    n = 200_000
+    M = piazzi.Subset(n, [0, 5])
+    x = torch.arange(n, dtype=D)
+    out = M.plus(x, torch.ones(n - 2, dtype=D))
+    assert out[0] == 0 and out[5] == 5 and out[1] == 2 and out[-1] == n
+    torch.testing.assert_close(M.minus(out, x), torch.ones(n - 2, dtype=D))
+
+
+def test_minimize_registered_method_without_manifold():
+    calls = []
+
+    def plain(fun, x0, *, has_aux, callback):
+        calls.append(x0)
+        return piazzi.lbfgs_armijo(fun, x0, has_aux=has_aux, callback=callback)
+
+    piazzi.MINIMIZE_METHODS["plain_test"] = plain
+    try:
+        res = piazzi.minimize(lambda x: ((x - 1) ** 2).sum(), torch.zeros(2, dtype=D), method="plain_test")
+        assert calls and res.converged
+    finally:
+        del piazzi.MINIMIZE_METHODS["plain_test"]

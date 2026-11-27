@@ -118,3 +118,30 @@ def test_invalid_damping():
     fun, x0 = exp_problem()
     with pytest.raises(ValueError, match="damping"):
         piazzi.least_squares(fun, x0, damping="levenberg")
+
+
+def test_cg_solver_rejects_non_positive_tol():
+    with pytest.raises(ValueError, match="tol"):
+        piazzi.cg_solver(tol=0.0)
+
+
+def test_cg_solver_breakdown_falls_back_to_gradient_step():
+    H = torch.zeros(3, 3, dtype=D).to_sparse_coo()  # damped system is singular: p^T A p = 0
+    g = torch.tensor([1.0, -2.0, 0.5], dtype=D)
+    d = piazzi.cg_solver(preconditioner=None)(H, g, torch.zeros(3, dtype=D))
+    torch.testing.assert_close(d, -g)
+
+
+@pytest.mark.parametrize("solve_dtype", [torch.float32, torch.float64])
+def test_gauss_newton_solve_dtype_narrowing_and_widening(solve_dtype):
+    fun, x0 = exp_problem()
+    res = piazzi.least_squares(fun, x0.to(torch.float32 if solve_dtype == D else D), solve_dtype=solve_dtype)
+    torch.testing.assert_close(res.x.double(), torch.tensor([2.5, 1.3], dtype=D), atol=1e-4, rtol=0)
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs Apple MPS")
+def test_float64_problem_with_float32_solve_on_mps():
+    fun, x0 = exp_problem()  # float64 on the CPU; MPS cannot hold float64 even briefly
+    res = piazzi.least_squares(fun, x0, solve_device="mps", solve_dtype=torch.float32)
+    assert res.converged, res.message
+    torch.testing.assert_close(res.x, torch.tensor([2.5, 1.3], dtype=D), atol=1e-4, rtol=0)

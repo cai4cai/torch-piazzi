@@ -80,6 +80,17 @@ def check_x0(x0: torch.Tensor) -> tuple[torch.Tensor, torch.Size]:
     return x0.detach().reshape(-1).clone(), x0.shape
 
 
+def transfer(t: torch.Tensor, device, dtype: torch.dtype) -> torch.Tensor:
+    """Move ``t`` to ``device`` and cast it to ``dtype``, casting on the side that supports the wider dtype.
+
+    Narrowing (float64 -> float32) casts first, since the target device may lack float64 (MPS);
+    widening moves first, since the source device may lack it.
+    """
+    if torch.finfo(dtype).bits < torch.finfo(t.dtype).bits:
+        return t.to(dtype).to(device)
+    return t.to(device).to(dtype)
+
+
 def retract(manifold, x: torch.Tensor, d: torch.Tensor) -> torch.Tensor:
     """``x + d`` on a flat point, or ``manifold.plus(x, d)`` when a manifold is given."""
     return x + d if manifold is None else manifold.plus(x, d)

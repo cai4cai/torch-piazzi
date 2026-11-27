@@ -43,4 +43,5 @@ def minimize(
     key = method.lower()
     if key not in MINIMIZE_METHODS:
         raise ValueError(f"method must be one of {sorted(MINIMIZE_METHODS)}, got {method!r}")
-    return MINIMIZE_METHODS[key](fun, x0, has_aux=has_aux, manifold=manifold, callback=callback, **(options or {}))
+    extra = {} if manifold is None else {"manifold": manifold}  # registered methods need not know manifolds
+    return MINIMIZE_METHODS[key](fun, x0, has_aux=has_aux, callback=callback, **extra, **(options or {}))

@@ -56,9 +56,11 @@ def cg_solver(
     Returns a ``solver(H, g, damping)`` for the ``linear_solver`` argument of
     :func:`gauss_newton`. ``H`` is only used through its diagonal and matrix-vector
     products, so it can be any sparse layout ``H @ v`` supports. CG stops at a relative
-    residual of ``tol`` or after ``max_iter`` iterations, without a warning: an inexact
-    step is fine for Gauss-Newton and Levenberg-Marquardt, whose line search or gain ratio
-    checks it.
+    residual of ``tol`` (> 0) or after ``max_iter`` iterations, without a warning: an
+    inexact step is fine for Gauss-Newton and Levenberg-Marquardt, whose line search or gain
+    ratio checks it. If CG breaks down (a numerically singular damped system), the solver
+    returns the preconditioned gradient step ``-M^{-1} g`` instead, which is still a descent
+    direction.
 
     Args:
         preconditioner: ``"jacobi"`` (default) divides by ``diag(H) + damping``. A callable
@@ -77,6 +79,8 @@ def cg_solver(
             'cg_solver needs torchsparsegradutils: pip install "piazzi[sparse]", '
             "or pass another linear_solver (for example piazzi.dense_solver)"
         ) from err
+    if not tol > 0:
+        raise ValueError(f"tol must be positive, got {tol!r}")
     if not (preconditioner is None or preconditioner == "jacobi" or callable(preconditioner)):
         raise ValueError(f"preconditioner must be 'jacobi', a callable or None, got {preconditioner!r}")
 
@@ -97,8 +101,19 @@ def cg_solver(
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", "CG terminated", UserWarning)
-            return linear_cg(
-                matmul, -g, tolerance=tol, max_iter=max_iter, max_tridiag_iter=min(max_iter, 20), preconditioner=precond
-            )
+            try:
+                return linear_cg(
+                    matmul,
+                    -g,
+                    tolerance=tol,
+                    max_iter=max_iter,
+                    max_tridiag_iter=min(max_iter, 20),
+                    preconditioner=precond,
+                )
+            except RuntimeError as err:
+                if "breakdown" not in str(err):
+                    raise
+                d = -(precond(g) if precond is not None else g)
+                return d if torch.isfinite(d).all() else -g
 
     return solve

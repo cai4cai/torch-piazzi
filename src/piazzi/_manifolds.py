@@ -152,8 +152,8 @@ class Subset(Manifold):
         return len(self.free)
 
     def plus(self, x, delta):
-        embed = torch.eye(self.ambient_size, dtype=x.dtype, device=x.device)[:, self.free]
-        return (x.reshape(-1) + embed @ delta.reshape(-1)).reshape(x.shape)
+        free = torch.as_tensor(self.free, dtype=torch.long, device=x.device)
+        return x.reshape(-1).index_add(0, free, delta.reshape(-1).to(x.dtype)).reshape(x.shape)
 
     def minus(self, y, x):
         return (y - x).reshape(-1)[self.free]
