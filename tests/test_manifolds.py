@@ -322,3 +322,8 @@ def test_minimize_registered_method_without_manifold():
         assert calls and res.converged
     finally:
         del piazzi.MINIMIZE_METHODS["plain_test"]
+
+
+def test_minimize_torch_optim_rejects_manifold():
+    with pytest.raises(ValueError, match="manifold"):
+        piazzi.minimize(lambda T: (T**2).sum(), torch.eye(4, dtype=D), method=torch.optim.Adam, manifold=piazzi.SE3())
