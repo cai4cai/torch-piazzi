@@ -327,3 +327,43 @@ def test_minimize_registered_method_without_manifold():
 def test_minimize_torch_optim_rejects_manifold():
     with pytest.raises(ValueError, match="manifold"):
         piazzi.minimize(lambda T: (T**2).sum(), torch.eye(4, dtype=D), method=torch.optim.Adam, manifold=piazzi.SE3())
+
+
+FIXED = piazzi.Subset(3, [0, 1, 2])  # a manifold with no degrees of freedom
+
+
+@pytest.mark.parametrize("method", ["lm", "gn"])
+@pytest.mark.parametrize("damping", ["identity", "marquardt"])
+def test_least_squares_with_no_free_parameters(method, damping):
+    x0 = torch.tensor([1.0, 2.0, 3.0], dtype=D)
+    res = piazzi.least_squares(lambda x: x - 0.5, x0, manifold=FIXED, method=method, damping=damping)
+    assert res.converged and res.message == "no free parameters"
+    torch.testing.assert_close(res.x, x0)
+    loss, g, H = piazzi.least_squares_system(lambda x: x - 0.5, manifold=FIXED)(x0)
+    assert g.shape == (0,) and H.shape == (0, 0) and loss.item() == pytest.approx(0.5 * (0.25 + 2.25 + 6.25))
+
+
+def test_lbfgs_and_minimize_with_no_free_parameters():
+    x0 = torch.tensor([1.0, 2.0, 3.0], dtype=D)
+    for res in (
+        piazzi.lbfgs_armijo(lambda x: (x**2).sum(), x0, manifold=FIXED),
+        piazzi.minimize(lambda x: (x**2).sum(), x0, manifold=FIXED),
+    ):
+        assert res.converged and res.message == "no free parameters"
+        torch.testing.assert_close(res.x, x0)
+
+
+@pytest.mark.parametrize("mode", ["fwd", "rev"])
+@pytest.mark.parametrize("axis", range(3))
+def test_log_derivatives_finite_at_exact_half_turn(mode, axis):
+    jac = torch.func.jacfwd if mode == "fwd" else torch.func.jacrev
+    signs = -torch.ones(3, dtype=D)
+    signs[axis] = 1.0
+    R = torch.diag(signs)  # rotation by exactly pi about axis `axis`
+    T = torch.eye(4, dtype=D)
+    T[:3, :3] = R
+    T[:3, 3] = torch.tensor([1.0, -2.0, 0.5], dtype=D)
+    with quiet_jvp_warnings():
+        assert jac(piazzi.so3_log)(R).isfinite().all()
+        assert jac(piazzi.se3_log)(T).isfinite().all()
+    assert piazzi.so3_log(R).norm().item() == pytest.approx(math.pi)

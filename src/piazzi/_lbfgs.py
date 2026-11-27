@@ -129,6 +129,8 @@ def lbfgs_armijo(
     f, aux, g = eval_full(x)
     if not torch.isfinite(f):
         return result(0, False, "objective is not finite at x0")
+    if g.numel() == 0:  # a manifold with no degrees of freedom (e.g. Subset with every entry fixed)
+        return result(0, True, "no free parameters")
     S: list[torch.Tensor] = []
     Y: list[torch.Tensor] = []
     fails = 0

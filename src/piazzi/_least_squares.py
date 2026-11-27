@@ -74,7 +74,11 @@ def least_squares_system(
                 J, extra = torch.func.jacfwd(flat, has_aux=True)(x.reshape(-1))
             else:
                 delta = x.new_zeros(manifold.tangent_size(x))
-                J, extra = torch.func.jacfwd(lambda d: flat(manifold.plus(x, d)), has_aux=True)(delta)
+                if delta.numel() == 0:  # every parameter fixed: J has no columns (jacfwd cannot do this)
+                    _, extra = flat(manifold.plus(x, delta))
+                    J = extra[0].new_zeros(extra[0].numel(), 0)
+                else:
+                    J, extra = torch.func.jacfwd(lambda d: flat(manifold.plus(x, d)), has_aux=True)(delta)
         r, aux = extra[0], (extra[1] if has_aux else None)
         if robust:
             z = (r / f_scale) ** 2

@@ -260,7 +260,9 @@ def so3_log(R: torch.Tensor) -> torch.Tensor:
     a_k = torch.take_along_dim(diag, k, dim=-1).clamp(min=torch.finfo(R.dtype).tiny).sqrt()
     axis = col / a_k
     axis = torch.where((axis * v).sum(-1, keepdim=True) < 0, -axis, axis)
-    sin_pi = torch.where(near_pi, s2, torch.ones_like(s2)).sqrt()
+    # Floor before the square root: at an exact half-turn s2 = 0, and sqrt's derivative there is
+    # infinite, which would make the derivatives of so3_log (and se3_log) non-finite.
+    sin_pi = torch.where(near_pi, s2, torch.ones_like(s2)).clamp(min=torch.finfo(R.dtype).tiny).sqrt()
     theta_pi = torch.where(near_pi, torch.atan2(sin_pi, cos), torch.zeros_like(cos))
     return torch.where(near_pi, theta_pi * axis, generic)
 
