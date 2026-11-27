@@ -18,6 +18,10 @@ class IterationInfo:
     ``x`` and ``fun`` are the current iterate and its value: the new point after an
     accepted step, the unchanged point after a rejected one. ``fun_start`` is the value
     at the start of the iteration.
+
+    ``n_fun_grad``, ``n_fun`` and ``n_system`` count the evaluations so far, including this
+    iteration's, as in :class:`OptimizeResult`. Use them to plot progress against cost
+    rather than iterations, which hide the evaluations a line search spends.
     """
 
     iteration: int
@@ -26,6 +30,9 @@ class IterationInfo:
     fun_start: torch.Tensor
     aux: Any
     accepted: bool
+    n_fun_grad: int = 0
+    n_fun: int = 0
+    n_system: int = 0
 
 
 @dataclass
