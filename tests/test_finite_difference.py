@@ -141,8 +141,9 @@ def test_least_squares_float32():
     torch.testing.assert_close(res.x, torch.tensor([2.0, 1.5]), atol=2e-3, rtol=0)
 
 
+@pytest.mark.parametrize("with_manifold", [False, True])
 @pytest.mark.parametrize("solver", ["least_squares", "minimize"])
-def test_manifold_registration_matches_autodiff(solver):
+def test_manifold_registration_matches_autodiff(solver, with_manifold):
     """Rotate points with an SE(3) pose; the differences are taken in the tangent space through ``plus``."""
     gen = torch.Generator().manual_seed(0)
     pts = torch.randn(12, 3, dtype=F64, generator=gen)
@@ -156,12 +157,53 @@ def test_manifold_registration_matches_autodiff(solver):
     T0 = torch.eye(4, dtype=F64)
     if solver == "least_squares":
         run = lambda f: piazzi.least_squares(f, T0, manifold=M, step_tol=1e-10)  # noqa: E731
-        fd = piazzi.finite_difference(residuals)
+        fd = piazzi.finite_difference(residuals, manifold=M if with_manifold else None)
     else:
         run = lambda f: piazzi.minimize(f, T0, manifold=M, options={"step_tol": 1e-10, "max_iter": 200})  # noqa: E731
-        fd = piazzi.finite_difference(lambda T: 0.5 * residuals(T).square().sum())
+        fd = piazzi.finite_difference(
+            lambda T: 0.5 * residuals(T).square().sum(), manifold=M if with_manifold else None
+        )
         residuals_scalar = lambda T: 0.5 * residuals(T).square().sum()  # noqa: E731
     res = run(fd)
     ref = run(residuals if solver == "least_squares" else residuals_scalar)
     assert torch.allclose(res.x, truth, atol=1e-5), (res.x, res.message)
     torch.testing.assert_close(res.x, ref.x, atol=1e-5, rtol=0)
+
+
+def random_pose(seed):
+    gen = torch.Generator().manual_seed(seed)
+    return piazzi.se3_exp(0.7 * torch.randn(6, dtype=F64, generator=gen))
+
+
+@pytest.mark.parametrize("scheme", ["central", "forward"])
+@pytest.mark.parametrize("manifold, point", [(piazzi.SE3(), random_pose(1)), (piazzi.SO3(), random_pose(2)[:3, :3])])
+def test_manifold_differences_stay_on_the_manifold(manifold, point, scheme):
+    """With manifold=, fun only sees valid rotations, and the tangent-space Jacobian matches autodiff."""
+    seen = []
+    pts = torch.randn(5, 3, dtype=F64, generator=torch.Generator().manual_seed(3))
+
+    def fun(T):
+        R = T[:3, :3]
+        seen.append((R @ R.T - torch.eye(3, dtype=F64)).abs().max().item())
+        return (pts @ R.T + (T[:3, 3] if T.shape[0] == 4 else 0)).reshape(-1)
+
+    fd = piazzi.finite_difference(fun, manifold=manifold, scheme=scheme)
+    delta0 = torch.zeros(manifold.tangent_size(point), dtype=F64)
+    tol = 1e-5 if scheme == "central" else 1e-3
+    with quiet_jvp_warnings():
+        exact = torch.func.jacfwd(lambda d: fun(manifold.plus(point, d)))(delta0)
+        seen.clear()
+        got_fwd = torch.func.jacfwd(lambda d: fd(manifold.plus(point, d)))(delta0)
+        got_rev = torch.func.jacrev(lambda d: fd(manifold.plus(point, d)))(delta0)
+    assert max(seen) < 1e-12  # on the manifold to rounding, not O(eps^2) = 1e-11 and growing with eps
+    torch.testing.assert_close(got_fwd, exact, atol=tol, rtol=tol)
+    torch.testing.assert_close(got_rev, exact, atol=tol, rtol=tol)
+
+
+def test_manifold_central_cost_is_two_per_tangent_coordinate():
+    M = piazzi.SE3()
+    fd = piazzi.finite_difference(lambda T: T[:3, 3] * 2, manifold=M)
+    delta0 = torch.zeros(6, dtype=F64)
+    with quiet_jvp_warnings():
+        torch.func.jacfwd(lambda d: fd(M.plus(torch.eye(4, dtype=F64), d)))(delta0)
+    assert fd.n_evals == 1 + 2 * 6  # tangent size, not the 16 entries of the matrix

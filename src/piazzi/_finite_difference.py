@@ -6,6 +6,9 @@ from collections.abc import Callable
 
 import torch
 
+from ._common import quiet_jvp_warnings
+from ._manifolds import Manifold
+
 __all__ = ["finite_difference"]
 
 _SCHEMES = ("central", "forward")
@@ -14,8 +17,40 @@ _SCHEMES = ("central", "forward")
 class _Counter:
     """Holds the user's function, the step settings and the number of calls."""
 
-    def __init__(self, fun: Callable, eps: float | None, scheme: str):
-        self.fun, self.eps, self.scheme, self.n_evals = fun, eps, scheme, 0
+    def __init__(self, fun: Callable, eps: float | None, scheme: str, manifold: Manifold | None):
+        self.fun, self.eps, self.scheme, self.manifold, self.n_evals = fun, eps, scheme, manifold, 0
+
+    def default_eps(self, dtype: torch.dtype) -> float:
+        if self.eps is not None:
+            return self.eps
+        # the step that balances truncation and rounding error for the scheme
+        return torch.finfo(dtype).eps ** (1 / 3 if self.scheme == "central" else 1 / 2)
+
+    def tangent_pinv(self, x: torch.Tensor) -> torch.Tensor:
+        """Pseudo-inverse of ``P = d plus(x, delta) / d delta`` at ``delta = 0``, shape (tangent, numel).
+
+        ``P`` maps tangent coordinates to the ambient tangent vectors that autograd passes to
+        ``jvp``, so ``pinv(P) @ t`` recovers the coordinates ``delta`` of a tangent direction ``t``
+        (exactly: ``P`` has full column rank). It costs no evaluation of ``fun``.
+        """
+        m = self.manifold
+        zero = x.new_zeros(m.tangent_size(x))
+        with torch.enable_grad(), quiet_jvp_warnings():
+            P = torch.func.jacfwd(lambda d: m.plus(x, d).reshape(-1))(zero)
+        return torch.linalg.pinv(P)
+
+    def displaced(self, x: torch.Tensor, t: torch.Tensor | None = None, delta: torch.Tensor | None = None):
+        """Return the points ``x +- h d`` and the step ``h``.
+
+        Without a manifold, ``d`` is the ambient direction ``t`` (see :meth:`step`). With one,
+        ``d`` is the tangent direction with coordinates ``delta``, and the points are
+        ``manifold.plus(x, +-h * delta)``, so they lie on the manifold.
+        """
+        if self.manifold is None:
+            d, h = self.step(x, t)
+            return x + d, x - d, h
+        h = self.default_eps(x.dtype)  # tangent coordinates are already relative to the point
+        return self.manifold.plus(x, h * delta), self.manifold.plus(x, -h * delta), h
 
     def step(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Return the displacement ``h * t`` and the step ``h``, with ``h`` relative to ``|x|``.
@@ -24,9 +59,7 @@ class _Counter:
         step of a numerical Jacobian; for a general direction the scale is the ``|t|``-weighted mean
         of ``max(|x_i|, 1)``.
         """
-        eps = self.eps
-        if eps is None:  # the step that balances truncation and rounding error for the scheme
-            eps = torch.finfo(x.dtype).eps ** (1 / 3 if self.scheme == "central" else 1 / 2)
+        eps = self.default_eps(x.dtype)
         a = t.abs()
         scale = (a * x.abs().clamp(min=1)).sum() / a.sum().clamp(min=torch.finfo(x.dtype).tiny)
         return eps * scale * t, eps * scale
@@ -47,6 +80,7 @@ class _FiniteDifference(torch.autograd.Function):
     @staticmethod
     def setup_context(ctx, inputs, output):
         ctx.state, ctx.x, ctx.y = inputs[0], inputs[1].detach(), output.detach()
+        ctx.pinv = None  # computed on first use: the manifold's Jacobian is not needed for the value
 
     @staticmethod
     def vmap(info, in_dims, state, x):
@@ -59,38 +93,53 @@ class _FiniteDifference(torch.autograd.Function):
     def jvp(ctx, _, t):
         # Called by jacfwd once per tangent direction (under vmap), so J costs n or 2n evaluations.
         state, x = ctx.state, ctx.x
-        d, h = state.step(x, t)
-        up = _FiniteDifference.apply(state, x + d)
+        pinv = _pinv(ctx)
+        x_up, x_lo, h = state.displaced(x, t) if pinv is None else state.displaced(x, delta=pinv @ t.reshape(-1))
+        up = _FiniteDifference.apply(state, x_up)
         if state.scheme == "forward":
             return (up - ctx.y) / h
-        return (up - _FiniteDifference.apply(state, x - d)) / (2 * h)
+        return (up - _FiniteDifference.apply(state, x_lo)) / (2 * h)
 
     @staticmethod
     def backward(ctx, v):
         # Reverse mode needs J^T v: one directional difference per coordinate (n or 2n evaluations),
-        # each contracted with v, so J is never stored.
+        # each contracted with v, so J is never stored. With a manifold the coordinates are tangent
+        # ones, giving g = P^T J_amb^T v; the ambient gradient handed back is pinv(P)^T g, which the
+        # chain rule through ``plus`` maps back to g (P^T pinv(P)^T = I).
         state, x = ctx.state, ctx.x
-        flat = x.reshape(-1)
+        pinv = _pinv(ctx)
+        n = x.numel() if pinv is None else pinv.shape[0]
         g = []
-        for i in range(flat.numel()):
-            e = torch.zeros_like(flat)
+        for i in range(n):
+            e = torch.zeros(n, dtype=x.dtype, device=x.device)
             e[i] = 1
-            d, h = state.step(x, e.reshape(x.shape))
-            up = _FiniteDifference.apply(state, x + d)
-            lo = ctx.y if state.scheme == "forward" else _FiniteDifference.apply(state, x - d)
+            x_up, x_lo, h = state.displaced(x, e.reshape(x.shape)) if pinv is None else state.displaced(x, delta=e)
+            up = _FiniteDifference.apply(state, x_up)
+            lo = ctx.y if state.scheme == "forward" else _FiniteDifference.apply(state, x_lo)
             g.append(torch.sum(v * (up - lo)) / ((1 if state.scheme == "forward" else 2) * h))
-        return None, torch.stack(g).reshape(x.shape) if g else torch.zeros_like(x)
+        if not g:
+            return None, torch.zeros_like(x)
+        g = torch.stack(g)
+        return None, (g if pinv is None else pinv.T @ g).reshape(x.shape)
+
+
+def _pinv(ctx):
+    if ctx.state.manifold is None:
+        return None
+    if ctx.pinv is None:
+        ctx.pinv = ctx.state.tangent_pinv(ctx.x)
+    return ctx.pinv
 
 
 class FiniteDifference:
     """The callable returned by :func:`finite_difference`; ``n_evals`` counts calls of the wrapped function."""
 
-    def __init__(self, fun: Callable, eps: float | None, scheme: str):
+    def __init__(self, fun: Callable, eps: float | None, scheme: str, manifold: Manifold | None):
         if scheme not in _SCHEMES:
             raise ValueError(f"scheme must be one of {_SCHEMES}, got {scheme!r}")
         if eps is not None and not eps > 0:
             raise ValueError(f"eps must be positive, got {eps!r}")
-        self._state = _Counter(fun, eps, scheme)
+        self._state = _Counter(fun, eps, scheme, manifold)
 
     @property
     def n_evals(self) -> int:
@@ -101,7 +150,9 @@ class FiniteDifference:
         return _FiniteDifference.apply(self._state, x)
 
 
-def finite_difference(fun: Callable, *, eps: float | None = None, scheme: str = "central") -> FiniteDifference:
+def finite_difference(
+    fun: Callable, *, eps: float | None = None, scheme: str = "central", manifold: Manifold | None = None
+) -> FiniteDifference:
     """Make a black-box function look differentiable, so that any solver can use it.
 
     Use this when ``fun(x) -> tensor`` cannot be differentiated by autograd: a non-differentiable
@@ -127,10 +178,13 @@ def finite_difference(fun: Callable, *, eps: float | None = None, scheme: str = 
 
     The numerics follow ``torch.autograd.gradcheck``'s numerical Jacobian (central differences,
     one coordinate at a time), with the step relative to the coordinate: ``eps * max(|x_i|, 1)``.
-    With a ``manifold``, the solvers differentiate ``fun(manifold.plus(x, delta))`` at ``delta = 0``;
-    the differences are then taken along the manifold's tangent directions at the current point, so
-    ``fun`` is evaluated at points that leave the manifold by ``O(eps^2)`` (a rotation matrix
-    perturbed this way is orthogonal only to second order).
+    With ``manifold=M``, pass the same manifold to the solver (``least_squares(..., manifold=M)``).
+    The solver differentiates ``fun(M.plus(x, delta))`` at ``delta = 0``; the wrapper then recovers
+    the tangent coordinates ``delta`` of each direction and evaluates ``fun(M.plus(x, +-h * delta))``,
+    so ``fun`` only ever sees points on the manifold (a valid rotation matrix, say) and the step
+    ``h`` is in tangent coordinates (``eps``, not scaled by ``|x|``). Without ``manifold=``, the
+    differences are taken in ambient space along the tangent directions, so ``fun`` is evaluated
+    at points that leave the manifold by ``O(eps^2)``.
 
     Args:
         fun: the black-box function of a tensor, returning a tensor.
@@ -140,5 +194,6 @@ def finite_difference(fun: Callable, *, eps: float | None = None, scheme: str = 
         scheme: ``"central"`` (default; error ``O(eps^2)``, ``2n`` calls) or ``"forward"``
             (error ``O(eps)``, ``n`` calls, reusing the value at ``x`` that the solver has
             just computed).
+        manifold: the :class:`piazzi.Manifold` that the solver is given, if any, as above.
     """
-    return FiniteDifference(fun, eps, scheme)
+    return FiniteDifference(fun, eps, scheme, manifold)
