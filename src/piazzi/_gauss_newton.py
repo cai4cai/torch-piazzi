@@ -7,7 +7,8 @@ from collections.abc import Callable
 
 import torch
 
-from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree
+from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract
+from ._manifolds import Manifold
 
 __all__ = ["gauss_newton", "levenberg_marquardt"]
 
@@ -18,6 +19,7 @@ def gauss_newton(
     *,
     method: str = "lm",
     has_aux: bool = False,
+    manifold: Manifold | None = None,
     value_fun: Callable | None = None,
     max_iter: int = 100,
     max_step: float = 1.0,
@@ -52,6 +54,11 @@ def gauss_newton(
     Both stop once a step is below ``step_tol`` (max-norm), or when the gradient is exactly
     zero (a stationary point, where ``H`` may be singular). A trial point with a non-finite
     value is never accepted, and a non-finite value at ``x0`` stops the run at once.
+
+    With a ``manifold`` (see :class:`piazzi.Manifold`), ``g`` and ``H`` are in its tangent
+    coordinates at ``x`` (:func:`piazzi.least_squares_system` builds them that way when given
+    the same manifold), and each step is applied as ``x <- manifold.plus(x, step)``.
+    ``max_step`` and ``step_tol`` then apply to the tangent step.
 
     Args:
         value_fun: optional cheaper ``value_fun(x) -> loss`` for value-only evaluations.
@@ -129,13 +136,13 @@ def gauss_newton(
             gtd = torch.dot(gc, d).item()
             t = 1.0
             dx = d.to(x)
-            x_new = x + dx
+            x_new = retract(manifold, x, dx)
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             n_bt = 0
 
             while not armijo_ok(f_new.item(), f_val, t, gtd, d) and n_bt < max_backtracks:
                 t *= 0.5
-                x_new = x + t * dx
+                x_new = retract(manifold, x, t * dx)
                 f_new, g_new = eval_value(x_new), None
                 n_bt += 1
             if not armijo_ok(f_new.item(), f_val, t, gtd, d):
@@ -155,7 +162,7 @@ def gauss_newton(
         # Levenberg-Marquardt.
         d = solve(Hc, gc, lam)
         pred = -(torch.dot(gc, d) + 0.5 * d @ Hc @ d).item()
-        x_new = x + d.to(x)
+        x_new = retract(manifold, x, d.to(x))
         if rejections == 0:  # after an accepted step the trial is usually accepted too
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             have_sys = True

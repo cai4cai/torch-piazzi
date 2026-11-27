@@ -9,6 +9,7 @@ import torch
 from ._common import OptimizeResult, quiet_jvp_warnings
 from ._gauss_newton import gauss_newton
 from ._losses import Loss, check_loss, rho_and_derivatives, robust_cost
+from ._manifolds import Manifold
 
 __all__ = ["least_squares", "least_squares_system"]
 
@@ -20,6 +21,7 @@ def least_squares_system(
     loss: Loss = "linear",
     f_scale: float = 1.0,
     curvature: str = "irls",
+    manifold: Manifold | None = None,
 ) -> Callable:
     """Turn ``residual_fun(x) -> r`` into a normal-equations function for :func:`gauss_newton`.
 
@@ -47,6 +49,10 @@ def least_squares_system(
               outliers the bracket is negative and floored at ``eps``. When most
               residuals start as outliers, ``H`` is then nearly singular and
               Levenberg-Marquardt can stall; ``method="gn"`` copes better.
+        manifold: optional :class:`piazzi.Manifold` for ``x``. ``J`` is then the Jacobian of
+            ``delta -> r(manifold.plus(x, delta))`` at ``delta = 0``, so ``g`` and ``H`` are
+            in tangent coordinates (for example 6 columns for :class:`piazzi.SE3`). Pass the
+            same manifold to :func:`gauss_newton`.
     """
     check_loss(loss, f_scale)
     if curvature not in ("irls", "scipy"):
@@ -64,7 +70,11 @@ def least_squares_system(
             return out.reshape(-1), (out.reshape(-1),)
 
         with quiet_jvp_warnings():
-            J, extra = torch.func.jacfwd(flat, has_aux=True)(x.reshape(-1))
+            if manifold is None:
+                J, extra = torch.func.jacfwd(flat, has_aux=True)(x.reshape(-1))
+            else:
+                delta = x.new_zeros(manifold.tangent_size(x))
+                J, extra = torch.func.jacfwd(lambda d: flat(manifold.plus(x, d)), has_aux=True)(delta)
         r, aux = extra[0], (extra[1] if has_aux else None)
         if robust:
             z = (r / f_scale) ** 2
@@ -89,6 +99,7 @@ def least_squares(
     method: str = "lm",
     has_aux: bool = False,
     curvature: str = "irls",
+    manifold: Manifold | None = None,
     **kwargs,
 ) -> OptimizeResult:
     """Minimise ``0.5 * sum(f_scale^2 * rho((fun(x) / f_scale)^2))``, like ``scipy.optimize.least_squares``.
@@ -96,15 +107,17 @@ def least_squares(
     ``fun(x)`` returns the residuals (``(r, aux)`` with ``has_aux``). This builds the normal
     equations with :func:`least_squares_system` and solves them with :func:`gauss_newton`
     (``method="lm"`` or ``"gn"``), using the residuals alone, without the Jacobian, for
-    value-only evaluations. ``loss``, ``f_scale`` and ``curvature`` are as in
+    value-only evaluations. ``loss``, ``f_scale``, ``curvature`` and ``manifold`` are as in
     :func:`least_squares_system`, and other keyword arguments go to :func:`gauss_newton`.
+    With a ``manifold`` such as :class:`piazzi.SE3`, ``x0`` is a point on it (a 4 x 4 pose)
+    and every iterate stays on it.
     ``result.fun`` is the cost, not the residuals.
     """
-    system = least_squares_system(fun, has_aux, loss=loss, f_scale=f_scale, curvature=curvature)
+    system = least_squares_system(fun, has_aux, loss=loss, f_scale=f_scale, curvature=curvature, manifold=manifold)
 
     def value_fun(x):
         out = fun(x)
         return robust_cost((out[0] if has_aux else out).reshape(-1), loss, f_scale)
 
     kwargs.setdefault("value_fun", value_fun)
-    return gauss_newton(system, x0, method=method, has_aux=has_aux, **kwargs)
+    return gauss_newton(system, x0, method=method, has_aux=has_aux, manifold=manifold, **kwargs)

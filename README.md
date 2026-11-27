@@ -25,6 +25,34 @@ The gradient is `Jᵀ(ρ′ ⊙ r)`. By default the curvature model is `Jᵀ dia
 
 The normal equations are solved in float64 on the CPU by default, so the objective itself can run in float32 on a GPU or MPS device. Every solver returns an `OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. You can pass `callback(info)` to record the iterates or to stop early by returning `True`.
 
+### Manifolds: poses and rotations
+
+Pass `manifold=` to `least_squares`, `gauss_newton`, `lbfgs_armijo` or `minimize` to keep `x` on a constrained set, as Ceres Solver's [`Manifold`](https://ceres-solver.readthedocs.io/latest/nnls_modeling.html#manifold) does. A manifold supplies `plus(x, delta)`, which moves `x` by a tangent vector. The solver takes its Jacobian or gradient with respect to `delta` at zero, by autodiff through `plus`, and applies each step as `x <- plus(x, step)`. A 4 x 4 pose therefore gives 6 Jacobian columns, and every iterate stays a rigid transform.
+
+| Manifold | Stored as | Tangent | Notes |
+|---|---|---|---|
+| `Euclidean(shape)` | any tensor | same size | The default behaviour; a shape is only needed inside `Product`. |
+| `Subset(size, constant)` | vector | free entries | Holds some entries fixed, like Ceres's `SubsetManifold`. |
+| `SO3(side="right")` | 3 x 3 rotation | 3 | `R @ so3_exp(w)` (body frame), or `so3_exp(w) @ R` with `side="left"`. |
+| `SE3(side="right", retraction="decoupled", pivot=None)` | 4 x 4 rigid transform | 6, `(rho, omega)` | `retraction="exp"` uses the true SE(3) exponential (a screw motion). `pivot` sets the point that rotations turn about. |
+| `Product(*manifolds)` | flat vector | sum | Use `M.join(...)` to build `x0` and `M.split(x)` to unpack it, for example a pose plus camera intrinsics. |
+
+The manifolds also provide `minus(y, x)`, which inverts `plus`. The solvers don't use it, but it measures errors between points. `so3_exp`, `so3_log`, `se3_exp`, `se3_log` and `so3_hat` work on batches.
+
+```python
+P, Q = ...  # matching 3D points, Q ~ R @ p + t
+res = piazzi.least_squares(
+    lambda T: P @ T[:3, :3].T + T[:3, 3] - Q, torch.eye(4), manifold=piazzi.SE3(pivot=P.mean(0)), max_step=1e3
+)
+res.x  # a 4 x 4 rigid transform
+```
+
+**Set the pivot for registration.** Put `pivot` at the centre of the object. If the object sits far from the origin, a rotation about the origin also moves it a long way. Rotation and translation are then strongly coupled and Gauss-Newton crawls. In the tests, a point set 140 units from the origin converges in 5 Gauss-Newton iterations with the pivot at its centre, and has not converged after 10 without it.
+
+**Set `max_step` for the problem's units.** It caps every tangent component, so it applies to radians and translation units alike. Its default of 1 can slow down a large translation.
+
+The [`_manifolds.py`](src/piazzi/_manifolds.py) docstring explains how this design compares with Ceres, [PyPose](https://github.com/pypose/pypose) and [GeoTorch](https://github.com/lezcano/geotorch). [`tests/test_ceres_manifolds.py`](tests/test_ceres_manifolds.py) ports Ceres's manifold and rotation tests.
+
 ## Third-party backends
 
 `piazzi` also has thin wrappers around third-party solvers, so you can compare backends on the same problem. Each wrapper takes PyTorch functions, converts between PyTorch and the backend's arrays, and returns the same `OptimizeResult` as the native solvers. The backends are optional dependencies, and `import piazzi` does not load them.

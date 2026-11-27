@@ -7,7 +7,8 @@ from collections.abc import Callable
 
 import torch
 
-from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, split_aux
+from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract, split_aux
+from ._manifolds import Manifold
 
 __all__ = ["lbfgs_armijo"]
 
@@ -17,6 +18,7 @@ def lbfgs_armijo(
     x0: torch.Tensor,
     *,
     has_aux: bool = False,
+    manifold: Manifold | None = None,
     value_fun: Callable | None = None,
     max_iter: int = 100,
     lr: float = 1.0,
@@ -50,6 +52,12 @@ def lbfgs_armijo(
         x0: starting point (any shape; it is flattened internally).
         value_fun: optional cheaper ``value_fun(x) -> loss`` for the value-only
             evaluations of the line search (run under ``torch.no_grad``). Defaults to ``fun``.
+        manifold: optional :class:`piazzi.Manifold` for ``x`` (for example
+            :class:`piazzi.SE3`). The gradient is then taken with respect to the tangent
+            vector ``delta`` of ``fun(manifold.plus(x, delta))`` at ``delta = 0``, steps are
+            applied with ``manifold.plus``, and the curvature pairs are kept in tangent
+            coordinates without vector transport (as in Ceres's line-search solver).
+            ``max_step`` and ``step_tol`` apply to the tangent step.
         lr: initial step length along the L-BFGS direction.
         callback: called with an :class:`IterationInfo` after every iteration; returning
             True stops the run.
@@ -58,10 +66,15 @@ def lbfgs_armijo(
     counts = {"fg": 0, "f": 0}
 
     def eval_full(xv):
-        xg = xv.detach().reshape(shape).requires_grad_(True)
         with torch.enable_grad():
+            if manifold is None:
+                var = xv.detach().reshape(shape).requires_grad_(True)
+                xg = var
+            else:
+                var = xv.new_zeros(manifold.tangent_size(xv)).requires_grad_(True)
+                xg = manifold.plus(xv.detach(), var).reshape(shape)
             loss, aux = split_aux(fun(xg), has_aux)
-            (grad,) = torch.autograd.grad(loss, xg)
+            (grad,) = torch.autograd.grad(loss, var)
         counts["fg"] += 1
         return loss.detach(), detach_tree(aux), grad.detach().reshape(-1)
 
@@ -119,14 +132,14 @@ def lbfgs_armijo(
             d, gtd = -g, -torch.dot(g, g).item()
         t = lr if S else lr * min(1.0, 1.0 / max(g.abs().sum().item(), 1e-12))
         t = min(t, max_step / max(d.abs().max().item(), 1e-12))
-        x_new = x + t * d
+        x_new = retract(manifold, x, t * d)
         f_new, aux_new, g_new = eval_full(x_new)
         n_bt = 0
         while not armijo_ok(f_new.item(), f_val + c1 * t * gtd) and n_bt < max_backtracks:
             denom = 2.0 * (f_new.item() - f_val - gtd * t)
             t_q = -gtd * t * t / denom if denom > 0 else 0.5 * t
             t = min(max(t_q, 0.1 * t), 0.5 * t)
-            x_new = x + t * d
+            x_new = retract(manifold, x, t * d)
             f_new, g_new = eval_value(x_new), None
             n_bt += 1
         if not armijo_ok(f_new.item(), f_val + c1 * t * gtd):  # no sufficient decrease found
@@ -142,7 +155,7 @@ def lbfgs_armijo(
         fails = 0
         if g_new is None:
             f_new, aux_new, g_new = eval_full(x_new)
-        s_vec, y_vec = x_new - x, g_new - g
+        s_vec, y_vec = t * d, g_new - g
         if torch.dot(s_vec, y_vec).item() > 1e-10:
             S.append(s_vec)
             Y.append(y_vec)

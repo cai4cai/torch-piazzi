@@ -80,6 +80,11 @@ def check_x0(x0: torch.Tensor) -> tuple[torch.Tensor, torch.Size]:
     return x0.detach().reshape(-1).clone(), x0.shape
 
 
+def retract(manifold, x: torch.Tensor, d: torch.Tensor) -> torch.Tensor:
+    """``x + d`` on a flat point, or ``manifold.plus(x, d)`` when a manifold is given."""
+    return x + d if manifold is None else manifold.plus(x, d)
+
+
 @contextlib.contextmanager
 def quiet_jvp_warnings():
     """Silence a spurious deprecation warning on the first forward-mode AD call.
