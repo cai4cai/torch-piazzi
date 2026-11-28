@@ -126,7 +126,7 @@ def test_sparse_normal_equations(device, dtype, placement, layout, solver):
     assert_result(res, device, dtype, EXP_SOLUTION)
 
 
-@pytest.mark.parametrize("line_search", ["armijo", "strong_wolfe"])
+@pytest.mark.parametrize("line_search", ["armijo", "strong_wolfe", "hager_zhang"])
 @device_dtype
 def test_lbfgs(device, dtype, line_search):
     seen = []

@@ -34,12 +34,14 @@ Both accept `manifold=` (see {doc}`manifolds`), `has_aux=` and `callback=`, and 
 
 ## L-BFGS line searches
 
-{func}`~piazzi.lbfgs` offers two line searches through `line_search`:
+{func}`~piazzi.lbfgs` offers three line searches through `line_search`:
 
 - `"armijo"` (the default) backtracks until the sufficient-decrease condition holds. A rejected trial costs a forward pass only (`n_fun`), and the backward pass runs once, at the accepted point. This is the cheapest choice when the objective is expensive, but `sᵀy > 0` is not guaranteed, so pairs with non-positive curvature are skipped.
 - `"strong_wolfe"` brackets and zooms with cubic interpolation until the strong Wolfe conditions hold (`c1` and `c2`), as in {class}`torch.optim.LBFGS` and Ceres. The curvature condition keeps every pair positive, but each trial point needs its gradient, so a rejected trial costs a full `n_fun_grad` and `value_fun` is ignored.
 
-On the Rosenbrock function from `(-1.2, 1)`, strong Wolfe needs fewer iterations than Armijo (36 against 42) but not fewer evaluations (45 value-and-gradient evaluations against 43 plus 7 forward passes), and it matches the counts of Ceres and of PyTorch's L-BFGS (see the {doc}`Rosenbrock notebook <../examples/rosenbrock>`). Try it on non-convex problems where Armijo skips many pairs; keep Armijo when a rejected trial must stay cheap.
+- `"hager_zhang"` is the line search of CG_DESCENT (Hager and Zhang, 2006): bracketing, then secant steps and bisection. It accepts a point that satisfies the Wolfe conditions or the *approximate* Wolfe conditions, which compare slopes instead of values, so they stay meaningful near a minimiser where the loss differences are lost in rounding noise (typically in float32, or near a zero residual). `hz_epsilon` (default `1e-6`) bounds how far such a step may raise the loss, relative to the loss; `hz_epsilon=0` keeps every step monotone. Like strong Wolfe, each trial costs an `n_fun_grad`, and `value_fun` is ignored.
+
+On the Rosenbrock function from `(-1.2, 1)`, strong Wolfe needs fewer iterations than Armijo (36 against 42) but not fewer evaluations (45 value-and-gradient evaluations against 43 plus 7 forward passes), and it matches the counts of Ceres and of PyTorch's L-BFGS (see the {doc}`Rosenbrock notebook <../examples/rosenbrock>`). Hager-Zhang needs the fewest iterations (34) and the most evaluations (49). Try the Wolfe searches on non-convex problems where Armijo skips many pairs, and Hager-Zhang where rounding noise stops the other searches near the minimiser; keep Armijo when a rejected trial must stay cheap.
 
 ## Damping and step limits
 

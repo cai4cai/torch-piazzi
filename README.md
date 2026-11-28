@@ -37,7 +37,7 @@ print(res.x, res.message)  # tensor([2.5026, 1.3005]) step below step_tol; loss=
 
 ## Features
 
-- **[Solvers](https://cai4cai.github.io/torch-piazzi/guide/solvers.html):** L-BFGS with an Armijo or strong Wolfe line search that counts every evaluation, Gauss-Newton and Levenberg-Marquardt, and SciPy-style `least_squares` and `minimize`.
+- **[Solvers](https://cai4cai.github.io/torch-piazzi/guide/solvers.html):** L-BFGS with an Armijo, strong Wolfe or Hager-Zhang line search that counts every evaluation, Gauss-Newton and Levenberg-Marquardt, and SciPy-style `least_squares` and `minimize`.
 - **[Robust losses](https://cai4cai.github.io/torch-piazzi/guide/least-squares.html):** SciPy's losses or any PyTorch `rho(z)`, with IRLS or SciPy curvature.
 - **[Black-box objectives](https://cai4cai.github.io/torch-piazzi/guide/least-squares.html):** `finite_difference` makes a function that autograd cannot see through usable by every solver.
 - **[Manifolds](https://cai4cai.github.io/torch-piazzi/guide/manifolds.html):** keep rotations and poses on SO(3) and SE(3), as Ceres's `Manifold` does, with batched exp/log maps.

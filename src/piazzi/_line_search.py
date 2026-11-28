@@ -5,8 +5,9 @@ Provides:
 - :func:`cubic_interp`: cubic Hermite minimiser used by :func:`wolfe_search`.
 - :func:`armijo_search`: cheap Armijo backtracking (one forward pass per rejected trial).
 - :func:`wolfe_search`: strong Wolfe bracketing and zoom with cubic interpolation.
+- :func:`hager_zhang_search`: the Hager-Zhang search of CG_DESCENT, with approximate Wolfe conditions.
 
-Both search routines accept pre-wired ``eval_*`` callables from the caller so that
+The search routines accept pre-wired ``eval_*`` callables from the caller so that
 evaluation counting and graph management stay in the solver.  The common return tuple is::
 
     (x_new, f_new, aux_new, g_new_or_None, t_accepted, x_first, first_unmoved, search_ok)
@@ -27,6 +28,27 @@ import torch
 from ._common import unmoved
 
 __all__: list[str] = []  # private module; nothing exported directly
+
+# :func:`hager_zhang_search` is a port of LineSearches.jl's ``HagerZhang`` (src/hagerzhang.jl), which
+# is licensed under the MIT licence:
+#
+# Copyright (c) 2012: John Myles White and other contributors (Optim.jl).
+# Copyright (c) 2016: Asbjørn Nilsen Riseth and other contributors (LineSearches.jl).
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+# associated documentation files (the "Software"), to deal in the Software without restriction,
+# including without limitation the rights to use, copy, modify, merge, publish, distribute,
+# sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all copies or
+# substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+# NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+# DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
+# OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 def cubic_interp(
@@ -367,3 +389,245 @@ def wolfe_search(
     f_new = torch.tensor(f_new_v, dtype=g.dtype, device=g.device)
     search_ok = t > 0 and math.isfinite(f_new_v) and f_new_v <= f_val + c1 * t * gtd
     return x_new, f_new, aux_new, g_new_v, t, x_first, first_unmoved, search_ok
+
+
+class _BudgetExhausted(Exception):
+    """Raised by the Hager-Zhang search's evaluator once its trial budget is spent."""
+
+
+def hager_zhang_search(
+    x: torch.Tensor,
+    f_val: float,
+    g: torch.Tensor,
+    aux,
+    d: torch.Tensor,
+    t_init: float,
+    t_max: float,
+    gtd: float,
+    used_memory: bool,
+    manifold,
+    c1: float,
+    c2: float,
+    epsilon: float,
+    max_ls: int,
+    eval_full,
+    retract,
+):
+    """Hager-Zhang line search: bracketing, secant steps and bisection with approximate Wolfe conditions.
+
+    Implements Algorithm 851 (CG_DESCENT) of Hager and Zhang (2006), in the form of
+    ``LineSearches.jl::HagerZhang`` (MIT licence, itself from Optim.jl): bracket (stages B0-B3),
+    then secant steps (S1-S4) with the bracket update (U0-U3) and bisection. A trial point is
+    accepted when it satisfies the Wolfe conditions with ``delta = c1`` and ``sigma = c2``, or the
+    approximate Wolfe conditions ``(2 c1 - 1) g.d <= g_t.d <= c2 g.d`` with ``f_t <= f + epsilon |f|``,
+    which stay meaningful where the loss differences are lost in rounding noise. Every trial
+    needs the gradient, so every evaluation is counted by ``eval_full``.
+
+    As in the references, a point that satisfies the approximate conditions may be higher than
+    the starting value, by at most ``epsilon |f|``; ``epsilon=0`` makes the search monotone.
+
+    Difference from the Julia code: the budget is a number of evaluations (``max_ls`` after the
+    first), enforced exactly. When the budget is spent, or no finite point is found, the best
+    evaluated point whose loss is at most ``f + epsilon |f|`` and which satisfies Armijo (or the
+    Wolfe conditions) is returned, else ``search_ok=False``. A non-finite value or slope shrinks
+    the step (first trial) or bisects towards the last good step (expansion).
+
+    Args:
+        x (Tensor): current flat iterate.
+        f_val (float): objective value at ``x``.
+        g (Tensor): gradient at ``x`` (flat, tangent coordinates).
+        aux: auxiliary output at ``x`` (returned if the search ends back at ``x``).
+        d (Tensor): search direction (flat, tangent coordinates).
+        t_init (float): initial step length.
+        t_max (float): largest step length (``max_step`` over the largest entry of ``d``).
+        gtd (float): directional derivative ``g . d`` at ``x`` (must be negative).
+        used_memory (bool): whether the direction came from L-BFGS memory (vs steepest descent).
+        manifold: manifold object or ``None``.
+        c1 (float): sufficient-decrease constant ``delta`` (``0 < c1 < min(c2, 1/2)``).
+        c2 (float): curvature constant ``sigma`` (``c1 < c2 < 1``).
+        epsilon (float): relative tolerance of the approximate Wolfe conditions.
+        max_ls (int): number of trial points after the first one.
+        eval_full: ``eval_full(xv)`` -> ``(f, aux, g)``; counts one ``n_fun_grad``.
+        retract: ``retract(manifold, x, delta)`` -> ``x_new``.
+
+    Returns:
+        tuple: ``(x_new, f_new, aux_new, g_new, t, x_first, first_unmoved, search_ok)``
+    """
+    rho, gamma, psi3 = 5.0, 2.0 / 3.0, 0.1  # HZ's expansion factor, contraction test and shrink factor
+    dtype_eps = torch.finfo(g.dtype).eps
+    d_norm = d.abs().max().item()
+    x_scale = max(x.abs().max().item(), 1.0)
+    phi_lim = f_val + epsilon * abs(f_val)
+
+    # Every evaluated point; index 0 is the start.
+    alphas, values, slopes = [0.0], [f_val], [gtd]
+    pts_x, pts_f, pts_aux, pts_g = [x], [torch.tensor(f_val, dtype=g.dtype, device=g.device)], [aux], [g]
+
+    def evaluate(t: float) -> int:
+        if len(alphas) - 1 > max_ls:
+            raise _BudgetExhausted
+        x_t = retract(manifold, x, t * d)
+        f_t, aux_t, g_t = eval_full(x_t)
+        alphas.append(t)
+        values.append(f_t.item())
+        slopes.append(torch.dot(g_t, d).item())
+        pts_x.append(x_t)
+        pts_f.append(f_t)
+        pts_aux.append(aux_t)
+        pts_g.append(g_t)
+        return len(alphas) - 1
+
+    def finite(i: int) -> bool:
+        return math.isfinite(values[i]) and math.isfinite(slopes[i])
+
+    def collapsed(a: float, b: float) -> bool:  # bracket below the resolution of t, or of x
+        return b - a <= 2.2e-16 * abs(b) or (b - a) * d_norm <= dtype_eps * x_scale
+
+    def satisfies_wolfe(i: int) -> bool:
+        t, f_t, df_t = alphas[i], values[i], slopes[i]
+        exact = c1 * gtd >= (f_t - f_val) / t and df_t >= c2 * gtd
+        approx = (2 * c1 - 1) * gtd >= df_t >= c2 * gtd and f_t <= phi_lim
+        return exact or approx
+
+    def acceptable(i: int) -> bool:  # a finite step with enough decrease (up to epsilon for approximate Wolfe)
+        t = alphas[i]
+        return (
+            i > 0
+            and t > 0
+            and finite(i)
+            and values[i] <= phi_lim
+            and (values[i] <= f_val + c1 * t * gtd or satisfies_wolfe(i))
+        )
+
+    def result(i: int):
+        ok = acceptable(i)
+        return pts_x[i], pts_f[i], pts_aux[i], pts_g[i], alphas[i], x_first, first_unmoved, ok
+
+    def secant(ia: int, ib: int) -> float:
+        den = slopes[ib] - slopes[ia]
+        if den == 0.0 or not math.isfinite(den):
+            return math.nan
+        return (alphas[ia] * slopes[ib] - alphas[ib] * slopes[ia]) / den
+
+    def bisect(ia: int, ib: int):  # HZ, stage U3 with theta = 1/2: returns (ia, ib, wolfe found at ib)
+        a, b = alphas[ia], alphas[ib]
+        while not collapsed(a, b):
+            mid = 0.5 * (a + b)
+            im = evaluate(mid)
+            if satisfies_wolfe(im):
+                return ia, im, True
+            if slopes[im] >= 0.0:
+                return ia, im, False
+            if values[im] <= phi_lim and math.isfinite(slopes[im]):
+                a, ia = mid, im
+            else:
+                b, ib = mid, im
+        return ia, ib, False
+
+    def update(ia: int, ib: int, ic: int):  # HZ, stages U0-U3
+        a, b, c = alphas[ia], alphas[ib], alphas[ic]
+        if not a < c < b:  # only a point strictly inside can narrow the bracket
+            return ia, ib, False
+        if slopes[ic] >= 0.0:
+            return ia, ic, False
+        if values[ic] <= phi_lim and math.isfinite(slopes[ic]):
+            return ic, ib, False
+        return bisect(ia, ic)
+
+    def secant2(ia: int, ib: int):  # HZ, stages S1-S4: returns (wolfe found, iA, iB)
+        if not slopes[ia] < 0.0:  # the bracket invariant: inaccurate gradients can break it
+            raise _BudgetExhausted
+        a, b = alphas[ia], alphas[ib]
+        c = secant(ia, ib)
+        if not a < c < b:  # not finite, or on an endpoint: bisect instead
+            c = 0.5 * (a + b)
+        ic = evaluate(c)
+        if satisfies_wolfe(ic):
+            return True, ic, ic
+        i_a, i_b, found = update(ia, ib, ic)
+        if found:
+            return True, i_b, i_b
+        if i_b == ic:  # b was updated: also update a
+            c = secant(ib, i_b)
+        elif i_a == ic:
+            c = secant(ia, i_a)
+        if (i_a == ic or i_b == ic) and alphas[i_a] < c < alphas[i_b]:
+            ic = evaluate(c)
+            if satisfies_wolfe(ic):
+                return True, ic, ic
+            i_a, i_b, found = update(i_a, i_b, ic)
+            if found:
+                return True, i_b, i_b
+        return False, i_a, i_b
+
+    x_first, first_unmoved = x, False
+    try:
+        # ---- first trial: shrink while the value or slope is not finite ----
+        c = min(t_init, t_max)
+        ic = evaluate(c)
+        x_first = pts_x[ic]
+        first_unmoved = used_memory and math.isfinite(values[ic]) and unmoved(manifold, x, x_first)
+        for _ in range(math.ceil(-math.log2(dtype_eps))):
+            if finite(ic):
+                break
+            c *= psi3
+            ic = evaluate(c)
+        if not finite(ic):
+            raise _BudgetExhausted
+        if satisfies_wolfe(ic):
+            return result(ic)
+
+        # ---- bracketing (HZ, stages B0-B3) ----
+        ia, ib = 0, ic
+        alpha_max = t_max
+        while True:
+            if slopes[ic] >= 0.0:  # past the minimum: b found, look back for a
+                ib = ic
+                ia = next((i for i in range(ib - 1, -1, -1) if finite(i) and values[i] <= phi_lim), 0)
+                break
+            if values[ic] > phi_lim:  # downhill slope but higher value: crested over a peak
+                ia, ib, found = bisect(0, ic)
+                if found:
+                    return result(ib)
+                break
+            # Still going downhill: expand. c_old is a viable step if bracketing fails.
+            c_old, i_old = alphas[ic], ic
+            if math.nextafter(c_old, math.inf) >= alpha_max:
+                return result(i_old)
+            c = min(c_old * rho, alpha_max)
+            ic = evaluate(c)
+            for _ in range(math.ceil(-math.log2(dtype_eps))):
+                if finite(ic) or c <= math.nextafter(c_old, math.inf):
+                    break
+                alpha_max = c  # steps from c on are assumed to be infeasible
+                c = 0.5 * (c_old + c)
+                ic = evaluate(c)
+            if not finite(ic):
+                return result(i_old)
+            if satisfies_wolfe(ic):
+                return result(ic)
+
+        # ---- secant steps and bisection inside the bracket (HZ, stages L1-L3) ----
+        while True:
+            a, b = alphas[ia], alphas[ib]
+            if collapsed(a, b):
+                return result(ia)
+            found, i_a, i_b = secant2(ia, ib)
+            if found:
+                return result(i_a)
+            width = alphas[i_b] - alphas[i_a]
+            if width < gamma * (b - a):
+                ia, ib = i_a, i_b
+            else:  # the secant steps converge too slowly: bisect
+                mid = 0.5 * (alphas[i_a] + alphas[i_b])
+                im = evaluate(mid)
+                if satisfies_wolfe(im):
+                    return result(im)
+                ia, ib, found = update(i_a, i_b, im)
+                if found:
+                    return result(ib)
+    except _BudgetExhausted:
+        pass
+    # Budget spent, or no finite point: the best acceptable point, if any.
+    best = min((i for i in range(1, len(alphas)) if acceptable(i)), key=lambda i: values[i], default=None)
+    return result(best if best is not None else min(1, len(alphas) - 1))

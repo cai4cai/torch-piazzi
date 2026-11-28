@@ -52,7 +52,7 @@ from problems import F64, SCALAR_PROBLEMS, rosen
 
 import piazzi
 
-SEARCHES = ["armijo", "strong_wolfe"]
+SEARCHES = ["armijo", "strong_wolfe", "hager_zhang"]
 OPTIONS = {"max_iter": 500, "step_tol": 1e-12}
 
 

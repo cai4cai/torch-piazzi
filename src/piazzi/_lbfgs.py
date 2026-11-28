@@ -1,4 +1,4 @@
-"""L-BFGS with Armijo backtracking or strong Wolfe line search."""
+"""L-BFGS with an Armijo, strong Wolfe or Hager-Zhang line search."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from ._common import (
     split_aux,
     within,
 )
-from ._line_search import armijo_search, wolfe_search
+from ._line_search import armijo_search, hager_zhang_search, wolfe_search
 from ._manifolds import Manifold
 from ._progress import with_progress
 
@@ -42,9 +42,10 @@ def lbfgs(
     max_iter: int = 100,
     lr: float = 1.0,
     history_size: int = 10,
-    line_search: Literal["armijo", "strong_wolfe"] = "armijo",
+    line_search: Literal["armijo", "strong_wolfe", "hager_zhang"] = "armijo",
     c1: float = 1e-4,
     c2: float = 0.9,
+    hz_epsilon: float = 1e-6,
     max_backtracks: int = 10,
     max_step: float = 1.0,
     step_tol: float = 1e-5,
@@ -76,7 +77,18 @@ def lbfgs(
     kept only if ``sᵀy > 0``, as with Armijo. On a failed search the memory is still
     reset and the solver retries with steepest descent, exactly as with Armijo.
 
-    **Convergence** (both line searches): curvature pairs with ``s·y ≤ 0`` are skipped
+    **Hager-Zhang** (``line_search="hager_zhang"``): the line search of CG_DESCENT (Hager and
+    Zhang, 2006, ported from ``LineSearches.jl``): bracketing, then secant steps and bisection,
+    accepting a point that satisfies the Wolfe conditions (``c1``, ``c2``) or the approximate
+    Wolfe conditions, which compare slopes instead of values and so stay meaningful near a
+    minimiser, where the loss differences drown in rounding noise (``hz_epsilon`` bounds how far
+    the loss may exceed its starting value for them to apply). Like strong Wolfe, every trial
+    needs its gradient (``n_fun_grad``) and ``value_fun`` is ignored. Unlike it, a step satisfying
+    the approximate conditions may raise the loss by up to ``hz_epsilon * |loss|`` (``hz_epsilon=0``
+    keeps the loss from rising), a non-finite trial shrinks the step instead of failing the
+    search, and the interpolation is by secant steps on the slope, not cubic.
+
+    **Convergence** (every line search): curvature pairs with ``s·y ≤ 0`` are skipped
     (the strong Wolfe curvature condition rules them out when it holds). If no sufficient
     decrease is found, the memory is reset and the iterate does not move; the run retries
     once with steepest descent. It stops after two failures in a row, after one failure of a
@@ -119,18 +131,23 @@ def lbfgs(
             Default: ``1.0``
         history_size (int, optional): number of curvature pairs kept. Default: ``10``
         line_search (str, optional): ``"armijo"`` for cheap Armijo backtracking (one
-            forward pass per rejected trial) or ``"strong_wolfe"`` for the bracketing and
-            zoom method with cubic interpolation (one value-and-gradient evaluation per
-            trial). Default: ``"armijo"``
-        c1 (float, optional): sufficient-decrease (Armijo) constant, used by both line
-            searches. Default: ``1e-4``
-        c2 (float, optional): curvature constant for the strong Wolfe condition; must
-            satisfy ``c1 < c2 < 1`` (checked with ``line_search="strong_wolfe"``). Ignored
-            when ``line_search="armijo"``.
+            forward pass per rejected trial), ``"strong_wolfe"`` for the bracketing and
+            zoom method with cubic interpolation, or ``"hager_zhang"`` for the CG_DESCENT
+            search (one value-and-gradient evaluation per trial for both).
+            Default: ``"armijo"``
+        c1 (float, optional): sufficient-decrease (Armijo) constant, used by every line
+            search; ``"hager_zhang"`` needs ``c1 < 1/2`` (its ``delta``). Default: ``1e-4``
+        c2 (float, optional): curvature constant of the Wolfe conditions; must satisfy
+            ``c1 < c2 < 1`` (checked unless ``line_search="armijo"``, which ignores it).
             Default: ``0.9``
+        hz_epsilon (float, optional): relative tolerance of the approximate Wolfe conditions of
+            ``"hager_zhang"``: they apply to points whose loss is at most
+            ``loss + hz_epsilon * |loss|``, so a step may raise the loss by that much; ``0`` keeps
+            every step monotone. Ignored by the other line searches.
+            Default: ``1e-6``
         max_backtracks (int, optional): maximum number of trial points in one line search
             after the first one (step reductions for Armijo, bracketing and zoom trials for
-            strong Wolfe), so a search makes at most ``max_backtracks + 1`` evaluations.
+            strong Wolfe, evaluations for Hager-Zhang), so a search makes at most ``max_backtracks + 1`` evaluations.
             Default: ``10``
         max_step (float, optional): largest change of any coordinate in one step (in the
             units of ``x``, or of the tangent vector). Default: ``1.0``
@@ -170,11 +187,19 @@ def lbfgs(
         ... )
         >>> res_sw.x, res_sw.converged
         (tensor([1.0000, 1.0000], dtype=torch.float64), True)
+        >>> res_hz = piazzi.lbfgs(
+        ...     rosenbrock, torch.tensor([-1.2, 1.0], dtype=torch.float64),
+        ...     line_search="hager_zhang",
+        ... )
+        >>> res_hz.x, res_hz.converged
+        (tensor([1.0000, 1.0000], dtype=torch.float64), True)
     """
-    if line_search not in ("armijo", "strong_wolfe"):
-        raise ValueError(f"line_search must be 'armijo' or 'strong_wolfe', got {line_search!r}")
-    if line_search == "strong_wolfe" and not 0 < c1 < c2 < 1:
-        raise ValueError(f"strong Wolfe needs 0 < c1 < c2 < 1, got c1={c1!r}, c2={c2!r}")
+    if line_search not in ("armijo", "strong_wolfe", "hager_zhang"):
+        raise ValueError(f"line_search must be 'armijo', 'strong_wolfe' or 'hager_zhang', got {line_search!r}")
+    if line_search != "armijo" and not 0 < c1 < c2 < 1:
+        raise ValueError(f"{line_search} needs 0 < c1 < c2 < 1, got c1={c1!r}, c2={c2!r}")
+    if line_search == "hager_zhang" and not (c1 < 0.5 and hz_epsilon >= 0):
+        raise ValueError(f"hager_zhang needs c1 < 1/2 and hz_epsilon >= 0, got c1={c1!r}, hz_epsilon={hz_epsilon!r}")
     callback = with_progress(callback, verbose)
     x, shape = check_x0(x0)
     counts = {"fg": 0, "f": 0}
@@ -291,6 +316,25 @@ def lbfgs(
                 reject,
                 retract,
                 value_fun,
+            )
+        elif line_search == "hager_zhang":
+            x_new, f_new, aux_new, g_new, t, x_first, first_unmoved, search_ok = hager_zhang_search(
+                x,
+                f_val,
+                g,
+                aux,
+                d,
+                t,
+                max_step / max(d.abs().max().item(), 1e-12),
+                gtd,
+                used_memory,
+                manifold,
+                c1,
+                c2,
+                hz_epsilon,
+                max_backtracks,
+                eval_full,
+                retract,
             )
         else:
             x_new, f_new, aux_new, g_new, t, x_first, first_unmoved, search_ok = wolfe_search(

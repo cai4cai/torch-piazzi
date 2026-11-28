@@ -228,7 +228,7 @@ def test_least_squares_se3_robust(registration):
     assert errors["cauchy"] < 0.05 and errors["linear"] > 1.0
 
 
-@pytest.mark.parametrize("line_search", ["armijo", "strong_wolfe"])
+@pytest.mark.parametrize("line_search", ["armijo", "strong_wolfe", "hager_zhang"])
 @pytest.mark.parametrize("retraction", ["decoupled", "exp"])
 def test_lbfgs_and_minimize_se3(registration, retraction, line_search):
     residuals, T_true, centre = registration
