@@ -106,8 +106,16 @@ def system(p):
     return piazzi.least_squares_system(residuals)(p)
 
 
+def scipy_wrappers():
+    # Skip on SciPy itself: without it, piazzi.scipy raises its own ImportError, which importorskip doesn't skip.
+    pytest.importorskip("scipy")
+    import piazzi.scipy
+
+    return piazzi.scipy
+
+
 def scipy_least_squares(f, x0, **kw):
-    sp = pytest.importorskip("piazzi.scipy")
+    sp = scipy_wrappers()
     try:
         return sp.least_squares(f, x0, **kw)
     except TypeError as err:  # callbacks, and so verbose, need SciPy 1.16
@@ -117,7 +125,7 @@ def scipy_least_squares(f, x0, **kw):
 
 
 def scipy_minimize(f, x0, **kw):
-    return pytest.importorskip("piazzi.scipy").minimize(f, x0, method="BFGS", **kw)
+    return scipy_wrappers().minimize(f, x0, method="BFGS", **kw)
 
 
 SOLVERS = {
