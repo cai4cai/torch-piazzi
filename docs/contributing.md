@@ -27,7 +27,7 @@ Each workaround says, in a comment next to it, which upstream bug it avoids and 
 
 | Workaround | Upstream bug | Remove when | Test that fails without it |
 |---|---|---|---|
-| `quiet_jvp_warnings` in `src/piazzi/_common.py` filters a `FutureWarning` | The first forward-mode AD call loads PyTorch's JVP decompositions, which call the deprecated `torch.jit.script` (PyTorch 2.15 and earlier); fixed by [pytorch/pytorch#203621](https://github.com/pytorch/pytorch/pull/203621), after 2.15.0 | The PyTorch floor includes that fix | Any test that runs `jacfwd` (warnings are errors) |
+| `quiet_jvp_warnings` in `src/piazzi/_common.py` filters a `FutureWarning` | Forward-mode AD loads PyTorch's JVP decompositions, which call `torch.jit.script` (PyTorch 2.15 and earlier). It warns that `torch.jit.script` is deprecated and, on Python 3.14+, that it "is not supported in Python 3.14+". Fixed by [pytorch/pytorch#203621](https://github.com/pytorch/pytorch/pull/203621), after 2.15.0 | The PyTorch floor includes that fix, and neither warning appears on the newest Python in CI | Any test that runs `jacfwd` (warnings are errors), on every Python |
 | `keepdim=True` in `_exp_coeffs` in `src/piazzi/_manifolds.py` | In forward-mode AD, a 0-dim float32 tensor combined with a Python scalar gets a float64 tangent, which then breaks matmuls with float32 tensors (PyTorch 2.15) | A PyTorch release keeps the float32 tangent: remove `keepdim` and run the tests | `test_exp_derivative_at_zero_is_finite_and_exact[fwd]` and `test_least_squares_se3_float32` in `tests/test_manifolds.py` |
 
 ## Conventions
