@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable
 from typing import TextIO
 
-from ._common import IterationInfo
+from ._common import Callback, IterationInfo
 
 __all__ = ["print_progress"]
 
@@ -23,8 +23,9 @@ def print_progress(every: int = 1, file: TextIO | None = None) -> Callable[[Iter
     the iteration, whether the step was accepted or rejected, and the evaluations so far by
     kind (see :class:`piazzi.IterationInfo`), in the spirit of Ceres Solver's per-iteration
     summary. A header is printed before the first iteration of each run, so the same
-    callback can be reused. It never stops the run; to stop early as well, call it from your
-    own callback.
+    callback can be reused. It never stops the run. Every solver and wrapper also takes
+    ``verbose=True`` (or ``verbose=k``), which runs this printer before its ``callback``; call
+    ``print_progress`` yourself to print to another ``file``.
 
     Args:
         every (int, optional): print every ``every``-th iteration. Default: ``1``
@@ -66,3 +67,31 @@ def print_progress(every: int = 1, file: TextIO | None = None) -> Callable[[Iter
         print(row, file=out)
 
     return callback
+
+
+def with_progress(callback: Callback | None, verbose: bool | int) -> Callback | None:
+    """``callback``, preceded by :func:`print_progress` when ``verbose`` asks for it.
+
+    Every solver and wrapper calls this on its ``callback`` and ``verbose`` arguments:
+    ``False`` or ``0`` leaves ``callback`` as it is, ``True`` prints every iteration and an
+    integer ``k`` every ``k``-th one. The user's callback still runs after the printer, and its
+    return value still decides whether to stop the run.
+    """
+    if isinstance(verbose, bool):
+        every = int(verbose)
+    elif isinstance(verbose, int) and verbose >= 0:
+        every = verbose
+    else:
+        raise ValueError(f"verbose must be a bool or a non-negative integer, got {verbose!r}")
+    if every == 0:
+        return callback
+    printer = print_progress(every=every)
+    if callback is None:
+        return printer
+    user_callback = callback
+
+    def chained(info: IterationInfo) -> bool | None:
+        printer(info)
+        return user_callback(info)
+
+    return chained

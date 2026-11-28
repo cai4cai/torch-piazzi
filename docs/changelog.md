@@ -14,4 +14,4 @@ piazzi is pre-alpha and not yet on PyPI. Development so far:
 - Notebooks: robust regression, Rosenbrock, bundle adjustment.
 - This documentation site.
 - Requires Python 3.11 and PyTorch 2.15 or later, and CI tests the lowest allowed versions of every dependency.
-- `print_progress`, a callback that prints a table of a run's progress.
+- `print_progress`, a callback that prints a table of a run's progress, and `verbose=` on every solver and wrapper to use it.

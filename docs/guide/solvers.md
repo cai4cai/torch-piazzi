@@ -48,13 +48,13 @@ The evaluation counts are split by kind, because their costs differ: `n_fun_grad
 
 `callback(info)` receives an {class}`~piazzi.IterationInfo` after every iteration, accepted or not: the current point and value, the value at the start of the iteration, whether the step was accepted, and the evaluation counts so far (`info.n_fun_grad`, `info.n_fun`, `info.n_system`). Plot progress against those counts rather than iterations, which hide the evaluations a line search spends. Return `True` to stop the run.
 
-{func}`piazzi.print_progress` is a ready-made callback that prints a table of the run, one row per iteration, in the spirit of Ceres Solver's per-iteration summary:
+To watch a run, pass `verbose=True` to any solver or wrapper. It prints a table of the run, one row per iteration, in the spirit of Ceres Solver's per-iteration summary, and your own `callback` still runs after it:
 
 ```python
 t = torch.linspace(0, 1, 20, dtype=torch.float64)
 y = 2 * torch.exp(-3 * t)
 x0 = torch.tensor([1.0, 1.0], dtype=torch.float64)
-res = piazzi.least_squares(lambda p: p[0] * torch.exp(-p[1] * t) - y, x0, callback=piazzi.print_progress())
+res = piazzi.least_squares(lambda p: p[0] * torch.exp(-p[1] * t) - y, x0, verbose=True)
 ```
 
 ```text
@@ -64,4 +64,4 @@ res = piazzi.least_squares(lambda p: p[0] * torch.exp(-p[1] * t) - y, x0, callba
     ...
 ```
 
-Pass `every=10` to print every tenth iteration, or `file=` to write elsewhere than standard output.
+Pass `verbose=10` to print every tenth iteration. The table comes from {func}`piazzi.print_progress`, a ready-made callback: use `callback=piazzi.print_progress(file=...)` to write it elsewhere than standard output.
