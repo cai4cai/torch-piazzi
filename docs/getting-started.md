@@ -2,7 +2,13 @@
 
 ## Installation
 
-piazzi needs Python 3.11 or later and PyTorch 2.15 or later. It is not on PyPI yet, so install it from GitHub:
+piazzi needs Python 3.11 or later and PyTorch 2.15 or later. Install the alpha pre-release from PyPI:
+
+```bash
+pip install piazzi
+```
+
+To install the latest development version from GitHub instead:
 
 ```bash
 pip install "piazzi @ git+https://github.com/cai4cai/torch-piazzi"
@@ -14,10 +20,11 @@ Optional extras add third-party backends and solvers:
 |---|---|
 | `piazzi[scipy]` | {doc}`guide/backends`: `piazzi.scipy.least_squares` and `piazzi.scipy.minimize` |
 | `piazzi[pypose]` | {doc}`guide/backends`: `piazzi.pypose.least_squares`, PyPose's Gauss-Newton and Levenberg-Marquardt, also on `LieTensor` parameters |
+| `piazzi[torchmin]` | {doc}`guide/backends`: `piazzi.torchmin.minimize`, wrapping pytorch-minimize |
 | `piazzi[sparse]` | {func}`piazzi.cg_solver` (conjugate gradients from torchsparsegradutils), the default linear solver for a sparse Hessian |
 
 ```bash
-pip install "piazzi[scipy,pypose,sparse] @ git+https://github.com/cai4cai/torch-piazzi"
+pip install "piazzi[scipy,pypose,torchmin,sparse]"
 ```
 
 ## A first fit
