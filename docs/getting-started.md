@@ -2,7 +2,7 @@
 
 ## Installation
 
-piazzi needs Python 3.10 or later and PyTorch. It is not on PyPI yet, so install it from GitHub:
+piazzi needs Python 3.11 or later and PyTorch 2.15 or later. It is not on PyPI yet, so install it from GitHub:
 
 ```bash
 pip install "piazzi @ git+https://github.com/cai4cai/torch-piazzi"

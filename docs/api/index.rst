@@ -11,12 +11,14 @@ algorithms they run, for when you need a method's full control.
 -----------------------------------------
 
 SciPy-style entry points: give residuals or a scalar objective, choose the method by name.
+:func:`finite_difference` wraps an objective that autograd cannot differentiate.
 
 .. autosummary::
    :nosignatures:
 
    least_squares
    minimize
+   finite_difference
 
 The methods :func:`minimize` knows by name are in :data:`MINIMIZE_METHODS`.
 

@@ -24,16 +24,18 @@ Deterministic PyTorch solvers for nonlinear fitting problems (pose or camera reg
 uv sync --group dev --group notebooks
 uv run ruff check .
 uv run ruff format --check .   # also formats notebooks and README code blocks
+uv run pyright                 # type-checks src/ (standard mode)
 uv run pytest -q               # tests and docstring examples; warnings are errors (filterwarnings = ["error"])
 uv run python scripts/execute_notebooks.py   # when the library or a notebook changed
 uv run --group docs sphinx-build -W --keep-going docs docs/_build/html   # when docs, docstrings or notebooks changed
 ```
 
-CI runs the same checks on Python 3.10 and 3.12, a job with only the required dependencies (the tests of the optional extras must skip, not fail), the notebooks (with `--smoke`, which caps the iterations of the slow ones: CI checks that they run, the full run above is yours), and the documentation build (warnings are errors). All of it must pass before a PR is merged.
+CI runs the same checks on Python 3.11 and 3.15 (the oldest and newest that PyTorch supports), a job with the lowest version of every direct dependency that `pyproject.toml` allows, a job with only the required dependencies (the tests of the optional extras must skip, not fail), the notebooks (with `--smoke`, which caps the iterations of the slow ones: CI checks that they run, the full run above is yours), and the documentation build (warnings are errors). All of it must pass before a PR is merged.
 
 ## Code
 
-- **Warnings are bugs.** Fix the cause rather than silencing it. If a warning comes from a dependency, filter it as narrowly as possible (message, category and module), next to a comment linking the upstream issue and saying when to remove the filter, as `quiet_jvp_warnings` in `_common.py` does.
+- **Types.** Annotate public functions; pyright checks `src/` in standard mode (not strict, not the tests), and piazzi ships `py.typed`, so users' type checkers read the annotations. Fix a pyright error with a precise annotation, a narrowing `assert` or `cast` with a comment saying why it holds, or a small restructuring; don't silence it with `# type: ignore`.
+- **Warnings are bugs.** Fix the cause rather than silencing it. If a warning comes from a dependency, filter it as narrowly as possible (message, category and module), next to a comment linking the upstream issue and saying when to remove the filter, as `quiet_jvp_warnings` in `_common.py` does. Any workaround for an upstream bug (a warning filter or a code change) goes in the table of workarounds in `docs/contributing.md`, with the condition for removing it and the test that fails without it.
 - **No aliasing.** Clone `x0` and anything handed back to the user or to a callback; give user functions their own copy of the point; copy tensors a user's function returns if the solver keeps them across calls (a `system` may reuse its output buffers). Detach `aux` with `detach_tree`.
 - **Devices and dtypes.** The objective runs on the device and in the dtype of `x0`; the normal equations are solved in `solve_dtype` on `solve_device` (float64 on the CPU by default). MPS has no float64, so cast on the side that supports the wider dtype (`transfer` in `_common.py`, `t2n`/`n2t` in `scipy/_convert.py`) and never create a float64 tensor on MPS, even briefly.
 - **Tolerances relative to scale.** Tests such as "is this a descent direction" or "is this curvature pair positive" must be relative to the norms involved, so that an objective multiplied by 1e-9 behaves like the original.
