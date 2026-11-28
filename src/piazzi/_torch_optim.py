@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from typing import Any, cast
 
 import torch
 
@@ -36,8 +37,8 @@ def torch_optimizer(
     """
     x, shape = check_x0(x0)
     lbfgs = issubclass(optimizer, torch.optim.LBFGS)
+    eval_budget = max_iter * 5 // 4 if max_eval is None else max_eval  # LBFGS only
     if lbfgs:
-        max_eval = max_iter * 5 // 4 if max_eval is None else max_eval
         optimizer_options["max_iter"] = 1
     elif max_eval is not None:
         raise ValueError("max_eval applies to torch.optim.LBFGS only")
@@ -93,12 +94,13 @@ def torch_optimizer(
         return result(0, True, "gradient below tolerance_grad")
     for it in range(max_iter):
         if lbfgs:
-            if counts["fg"] >= max_eval:
+            if counts["fg"] >= eval_budget:
                 return result(it, False, "max_eval reached")
             # LBFGS counts the (memoised) evaluation at the start of the step against max_eval.
-            group["max_eval"] = max_eval - counts["fg"] + 1
+            group["max_eval"] = eval_budget - counts["fg"] + 1
         x_old, f_old, aux_old = param.detach().clone(), f, aux
-        opt.step(closure)
+        # torch's stubs type the closure as returning a float; optimisers accept a tensor loss.
+        opt.step(cast(Any, closure))
         f, g, aux = current()
         if not math.isfinite(f.item()):
             with torch.no_grad():

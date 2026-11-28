@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import scipy.optimize
@@ -146,41 +146,46 @@ def minimize(
     def scalar(x):
         return split_aux(fun(x), has_aux)[0]
 
+    # What SciPy gets for fun, jac, hess and hessp: callables, or values it understands.
+    scipy_fun: Callable = value
+    scipy_jac: Any = jac
+    scipy_hess: Any = hess
+    scipy_hessp: Any = hessp
     gradient_free = isinstance(method, str) and method.lower() in GRADIENT_FREE
     if gradient_free and jac == "autodiff":
-        scipy_fun, scipy_jac = value, None
+        scipy_jac = None
     elif jac == "autodiff":
         scipy_fun, scipy_jac = value_and_grad, True
     elif callable(jac):
-        scipy_fun = value
+        user_jac: Callable[[torch.Tensor], torch.Tensor] = jac
 
-        def scipy_jac(xn):
+        def callable_jac(xn):
             counts["fg"] += 1
             with torch.no_grad():
-                return t2n(jac(to_torch(xn))).reshape(-1)
+                return t2n(user_jac(to_torch(xn))).reshape(-1)
 
-    else:
-        scipy_fun, scipy_jac = value, jac
+        scipy_jac = callable_jac
 
     if hess == "autodiff":
 
-        def scipy_hess(xn):
+        def autodiff_hess(xn):
             counts["sys"] += 1
             return t2n(torch.autograd.functional.hessian(scalar, to_torch(xn))).reshape(n, n)
 
+        scipy_hess = autodiff_hess
     elif callable(hess) and not isinstance(hess, scipy.optimize.HessianUpdateStrategy):
+        user_hess = cast(Callable[[torch.Tensor], torch.Tensor], hess)
 
-        def scipy_hess(xn):
+        def callable_hess(xn):
             counts["sys"] += 1
             with torch.no_grad():
-                return t2n(hess(to_torch(xn))).reshape(n, n)
+                return t2n(user_hess(to_torch(xn))).reshape(n, n)
 
-    else:
-        scipy_hess = hess
+        scipy_hess = callable_hess
 
     if hessp == "autodiff":
 
-        def scipy_hessp(xn, pn):
+        def autodiff_hessp(xn, pn):
             counts["sys"] += 1
             xg = to_torch(xn).requires_grad_(True)
             with torch.enable_grad():
@@ -193,15 +198,16 @@ def minimize(
                 hv = torch.zeros_like(xg)
             return t2n(hv).reshape(-1)
 
+        scipy_hessp = autodiff_hessp
     elif callable(hessp):
+        user_hessp: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = hessp
 
-        def scipy_hessp(xn, pn):
+        def callable_hessp(xn, pn):
             counts["sys"] += 1
             with torch.no_grad():
-                return t2n(hessp(to_torch(xn), to_torch(pn))).reshape(-1)
+                return t2n(user_hessp(to_torch(xn), to_torch(pn))).reshape(-1)
 
-    else:
-        scipy_hessp = hessp
+        scipy_hessp = callable_hessp
 
     res = scipy.optimize.minimize(
         scipy_fun,
