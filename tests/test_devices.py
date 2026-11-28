@@ -181,6 +181,37 @@ def test_se3_registration(device, dtype, solver):
 
 
 @device_dtype
+@pytest.mark.parametrize("with_manifold", [False, True])
+@pytest.mark.parametrize("solver", ["least_squares", "minimize"])
+def test_finite_difference(device, dtype, solver, with_manifold):
+    """The wrapper on every device: differences, the tangent pseudo-inverse and the gradient stay on ``device``."""
+    g = torch.Generator().manual_seed(0)
+    P = torch.randn(12, 3, generator=g, dtype=torch.float64)
+    T_true = piazzi.se3_exp(torch.tensor([0.3, -0.2, 0.1, 0.2, -0.1, 0.15], dtype=torch.float64))
+    Q = P @ T_true[:3, :3].T + T_true[:3, 3]
+    P, Q = (v.to(dtype).to(device) for v in (P, Q))
+
+    def residuals(T):
+        return (P @ T[:3, :3].T + T[:3, 3] - Q).reshape(-1)
+
+    manifold = piazzi.SE3()
+    T0 = torch.eye(4, dtype=dtype, device=device)
+    # float32 differences are accurate to ~1e-3 (the step is ~5e-3), so only ask for that much.
+    if solver == "least_squares":
+        fd = piazzi.finite_difference(residuals, manifold=manifold if with_manifold else None)
+        res = piazzi.least_squares(fd, T0, manifold=manifold, step_tol=1e-9 if dtype == torch.float64 else 1e-4)
+    else:
+        fd = piazzi.finite_difference(
+            lambda T: 0.5 * residuals(T).square().sum(), manifold=manifold if with_manifold else None
+        )
+        res = piazzi.minimize(
+            fd, T0, manifold=manifold, options={"max_iter": 300, "step_tol": 1e-9 if dtype == torch.float64 else 1e-4}
+        )
+    assert res.x.device.type == device and res.x.dtype == dtype
+    torch.testing.assert_close(res.x.cpu().double(), T_true, atol=5e-3 if dtype == torch.float32 else 1e-5, rtol=0)
+
+
+@device_dtype
 def test_scipy_wrappers_return_to_the_device(device, dtype):
     pytest.importorskip("scipy")
     import piazzi.scipy
