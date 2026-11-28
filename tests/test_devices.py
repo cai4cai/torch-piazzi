@@ -69,7 +69,7 @@ def rosen(x):
 
 @device_dtype
 @placement
-@pytest.mark.parametrize("method", ["gn", "lm"])
+@pytest.mark.parametrize("method", ["gn", "lm", "dogleg"])
 @pytest.mark.parametrize("damping", ["identity", "marquardt"])
 def test_least_squares(device, dtype, placement, method, damping):
     fun, x0 = exp_problem(device, dtype)

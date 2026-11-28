@@ -4,7 +4,7 @@
 
 $$F(x) = \tfrac12 \sum_i C^2 \rho\!\left(r_i(x)^2 / C^2\right),$$
 
-where $C$ is `f_scale`, the soft margin between inlier and outlier residuals. It uses Levenberg-Marquardt (or Gauss-Newton with `method="gn"`) on normal equations built by {func}`piazzi.least_squares_system`. The Jacobian of the residuals comes from forward-mode autodiff (`torch.func.jacfwd`), so `fun` only has to return the residuals.
+where $C$ is `f_scale`, the soft margin between inlier and outlier residuals. It uses Levenberg-Marquardt (or Gauss-Newton with `method="gn"`, or a dog-leg trust region with `method="dogleg"`) on normal equations built by {func}`piazzi.least_squares_system`. The Jacobian of the residuals comes from forward-mode autodiff (`torch.func.jacfwd`), so `fun` only has to return the residuals.
 
 ## Robust losses
 

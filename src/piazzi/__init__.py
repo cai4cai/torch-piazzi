@@ -5,6 +5,7 @@ Piazzi's observations with the method of least squares.
 """
 
 from ._common import IterationInfo, OptimizeResult
+from ._dogleg import dogleg
 from ._finite_difference import finite_difference
 from ._gauss_newton import gauss_newton, levenberg_marquardt
 from ._lbfgs import lbfgs_armijo
@@ -31,6 +32,7 @@ __all__ = [
     "Subset",
     "cg_solver",
     "dense_solver",
+    "dogleg",
     "finite_difference",
     "gauss_newton",
     "lbfgs_armijo",
