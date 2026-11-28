@@ -13,10 +13,11 @@ Optional extras add third-party backends and solvers:
 | Extra | Adds |
 |---|---|
 | `piazzi[scipy]` | {doc}`guide/backends`: `piazzi.scipy.least_squares` and `piazzi.scipy.minimize` |
+| `piazzi[pypose]` | {doc}`guide/backends`: `piazzi.pypose.least_squares`, PyPose's Gauss-Newton and Levenberg-Marquardt, also on `LieTensor` parameters |
 | `piazzi[sparse]` | {func}`piazzi.cg_solver` (conjugate gradients from torchsparsegradutils), the default linear solver for a sparse Hessian |
 
 ```bash
-pip install "piazzi[scipy,sparse] @ git+https://github.com/cai4cai/torch-piazzi"
+pip install "piazzi[scipy,pypose,sparse] @ git+https://github.com/cai4cai/torch-piazzi"
 ```
 
 ## A first fit

@@ -176,7 +176,9 @@ def minimize(
 
         def autodiff_hess(xn):
             counts["sys"] += 1
-            return t2n(torch.autograd.functional.hessian(scalar, to_torch(xn))).reshape(n, n)
+            hess_t = torch.autograd.functional.hessian(scalar, to_torch(xn))
+            assert isinstance(hess_t, torch.Tensor)  # a tuple only for a tuple of inputs; the input is one tensor
+            return t2n(hess_t).reshape(n, n)
 
         scipy_hess = autodiff_hess
     elif callable(hess) and not isinstance(hess, scipy.optimize.HessianUpdateStrategy):

@@ -3,8 +3,8 @@ API reference
 
 .. currentmodule:: piazzi
 
-Everything below is importable from ``piazzi``, except the optional SciPy backend in
-``piazzi.scipy``. Start with the high-level interfaces; the method-specific solvers are the
+Everything below is importable from ``piazzi``, except the optional backends in
+``piazzi.scipy`` and ``piazzi.pypose``. Start with the high-level interfaces; the method-specific solvers are the
 algorithms they run, for when you need a method's full control.
 
 :doc:`High-level interfaces <interfaces>`
@@ -100,6 +100,18 @@ Requires the ``piazzi[scipy]`` extra.
    t2n
    n2t
 
+:doc:`PyPose backend <pypose>`
+------------------------------
+
+Requires the ``piazzi[pypose]`` extra.
+
+.. currentmodule:: piazzi.pypose
+
+.. autosummary::
+   :nosignatures:
+
+   least_squares
+
 .. toctree::
    :hidden:
 
@@ -110,3 +122,4 @@ Requires the ``piazzi[scipy]`` extra.
    manifolds
    linear-solvers
    scipy
+   pypose
