@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import torch
 
@@ -62,11 +64,11 @@ def bounds_to_scipy(bounds):
 
     if isinstance(bounds, scipy.optimize.Bounds):
         keep = np.asarray(bounds.keep_feasible)
-        return scipy.optimize.Bounds(
-            to_scipy_array(np.asarray(t2n(bounds.lb) if isinstance(bounds.lb, torch.Tensor) else bounds.lb)),
-            to_scipy_array(np.asarray(t2n(bounds.ub) if isinstance(bounds.ub, torch.Tensor) else bounds.ub)),
-            keep_feasible=keep.reshape(-1) if keep.ndim else keep,
-        )
+        # Typed Any: SciPy's stubs declare scalars, but Bounds takes arrays as well.
+        lb: Any = to_scipy_array(np.asarray(t2n(bounds.lb) if isinstance(bounds.lb, torch.Tensor) else bounds.lb))
+        ub: Any = to_scipy_array(np.asarray(t2n(bounds.ub) if isinstance(bounds.ub, torch.Tensor) else bounds.ub))
+        keep_feasible: Any = keep.reshape(-1) if keep.ndim else keep
+        return scipy.optimize.Bounds(lb, ub, keep_feasible=keep_feasible)
     if isinstance(bounds, torch.Tensor):  # (n, 2) tensor of (min, max) pairs
         return t2n(bounds).reshape(-1, 2)
     if isinstance(bounds, tuple) and len(bounds) == 2:
@@ -86,7 +88,7 @@ def iteration_callback(callback, like, shape, last, counts, cost_of):
         return None
     from .._common import IterationInfo
 
-    state = {"it": 0}
+    state: dict[str, Any] = {"it": 0}
 
     def scipy_callback(intermediate_result):
         x_only = isinstance(intermediate_result, np.ndarray)

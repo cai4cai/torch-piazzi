@@ -1,5 +1,6 @@
 """Evaluation counts in ``IterationInfo``, and what ``lbfgs_armijo``'s line search evaluates."""
 
+import itertools
 import weakref
 
 import pytest
@@ -63,7 +64,7 @@ def test_lbfgs_armijo_backward_only_at_accepted_points(x0):
     assert res.converged and res.n_fun > 0  # the line search did backtrack
     assert len(backwards) == res.n_fun_grad == res.n_iter + 1  # x0, then one per accepted step
     assert len(points) == res.n_fun_grad + res.n_fun
-    assert not any(torch.equal(a, b) for a, b in zip(points, points[1:], strict=False))
+    assert not any(torch.equal(a, b) for a, b in itertools.pairwise(points))
 
 
 def test_lbfgs_armijo_value_fun_counts():

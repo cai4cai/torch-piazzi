@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import torch
 import torch.utils._pytree as pytree
@@ -88,7 +89,7 @@ def least_squares_system(
         # (returned through jacfwd) and the rest (kept here), and put back together below.
         static = {}
 
-        def flat(xf):
+        def flat(xf) -> tuple[torch.Tensor, tuple[Any, ...]]:
             out = residual_fun(xf.reshape(shape))
             if has_aux:
                 r, aux = out
@@ -112,7 +113,8 @@ def least_squares_system(
                     _, extra = flat(manifold.plus(x, delta))
                     J = extra[0].new_zeros(extra[0].numel(), 0)
                 else:
-                    J, extra = torch.func.jacfwd(lambda d: flat(manifold.plus(x, d)), has_aux=True)(delta)
+                    plus = manifold.plus
+                    J, extra = torch.func.jacfwd(lambda d: flat(plus(x, d)), has_aux=True)(delta)
         r, aux = extra[0], (rebuild(extra[1]) if has_aux else None)
         if robust:
             z = (r / f_scale) ** 2

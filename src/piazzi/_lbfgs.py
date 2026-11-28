@@ -169,6 +169,7 @@ def lbfgs_armijo(
 
     def eval_value(xv):
         with torch.no_grad():
+            assert value_fun is not None  # only called with a value_fun
             loss = value_fun(xv.reshape(shape))
         if isinstance(loss, tuple):  # value_fun=fun with has_aux: drop the aux
             loss = loss[0]
@@ -287,8 +288,10 @@ def lbfgs_armijo(
         # sqrt(eps) (the loss is flat to second order), so within that distance (per entry, at
         # its scale) every point is a minimiser to working precision. Near a zero residual the
         # loss's noise is absolute, so the size of the decrease cannot tell noise from progress.
-        if stalled is not None and (
-            used_memory or not within(manifold, x_stalled, x_new, torch.finfo(x.dtype).eps ** 0.5)
+        if (
+            stalled is not None
+            and x_stalled is not None
+            and (used_memory or not within(manifold, x_stalled, x_new, torch.finfo(x.dtype).eps ** 0.5))
         ):
             stalled = None
         if pending is None:  # accepted on a value_fun evaluation

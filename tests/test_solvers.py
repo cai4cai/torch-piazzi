@@ -99,7 +99,7 @@ def test_lm_float32_objective_value_fun(exp_data):
 
 
 def test_bad_method():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="method must be"):
         piazzi.gauss_newton(lambda x: None, torch.zeros(2), method="dogleg")
 
 
