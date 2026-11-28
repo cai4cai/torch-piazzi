@@ -1,6 +1,5 @@
 """Tests of :func:`piazzi.dogleg` beyond the ported suites: counts, dtypes, odd curvature."""
 
-import itertools
 import math
 
 import pytest
@@ -34,8 +33,39 @@ def test_counts_match_the_callback():
     res = piazzi.least_squares(fun, x0, method="dogleg", callback=infos.append, initial_radius=0.1)
     assert res.converged, res.message
     assert infos[-1].n_system == res.n_system and infos[-1].n_fun == res.n_fun
-    # One system evaluation per accepted step, plus the start: rejections cost value-only evaluations.
-    assert res.n_system == 1 + sum(i.accepted for i in infos)
+
+
+def run_counts(first_trial):
+    infos = []
+    res = piazzi.least_squares(
+        fun_rosenbrock,
+        torch.tensor([-3.0, 2.0], dtype=F64),
+        method="dogleg",
+        initial_radius=1e4,
+        first_trial=first_trial,
+        callback=infos.append,
+    )
+    return res, infos
+
+
+def test_value_first_trial_never_wastes_a_system():
+    # With value-only first trials every full system is evaluated at an accepted point.
+    res, infos = run_counts("value")
+    assert res.converged, res.message
+    assert res.n_system == 1 + sum(i.accepted for i in infos[:-1]) + infos[-1].accepted
+
+
+def test_system_first_trial_wastes_systems_on_rejections():
+    res, infos = run_counts("system")
+    assert res.converged, res.message
+    assert res.n_system > 1 + sum(i.accepted for i in infos)  # a system at a rejected first trial
+
+
+def test_auto_first_trial_beats_always_system_when_rejections_are_common():
+    auto, _ = run_counts("auto")
+    system, _ = run_counts("system")
+    assert auto.converged and system.converged
+    assert auto.n_system <= system.n_system
 
 
 def test_a_rejected_trial_costs_no_linear_solve():
@@ -63,17 +93,21 @@ def test_a_rejected_trial_costs_no_linear_solve():
 
 
 def test_never_steps_uphill_with_an_indefinite_curvature():
-    def system(x):  # f = -0.5 x^2 + 0.25 x^4/4 ... curvature -1 at the origin side
-        loss = -0.5 * (x**2).sum() + 0.25 * (x**4).sum() / 4
-        g = -x + 0.25 * x**3
-        H = torch.diag(-torch.ones_like(x) + 0.75 * x**2)
-        return loss.sum(), g, H
+    # f = x^4 / 16 - x^2 / 2 per coordinate: negative curvature around 0, minima at +-sqrt(4).
+    # H is a negative definite matrix at the start, so there is no Gauss-Newton descent step and
+    # the Cauchy (steepest-descent) fallback has to make progress.
+    def system(x):
+        loss = (x**4 / 16 - x**2 / 2).sum()
+        return loss, x**3 / 4 - x, torch.diag(0.75 * x**2 - 1.0)
 
     x0 = torch.tensor([0.1, -0.2], dtype=F64)
-    values = []
-    res = piazzi.dogleg(system, x0, callback=lambda i: values.append(i.fun.item()), initial_radius=0.5)
-    assert all(b <= a for a, b in itertools.pairwise(values))
+    steps = []
+    res = piazzi.dogleg(system, x0, callback=steps.append, initial_radius=0.5)
+    accepted = [i for i in steps if i.accepted]
+    assert accepted
+    assert all(i.fun <= i.fun_start for i in accepted)  # no accepted step goes uphill
     assert res.fun < system(x0)[0]
+    assert torch.allclose(res.x.abs(), torch.full((2,), 2.0, dtype=F64), atol=1e-3), res
 
 
 def test_zero_gradient_and_non_finite_start():
@@ -108,6 +142,8 @@ def test_bad_arguments():
         piazzi.dogleg(system, x0, dogleg_type="exact")
     with pytest.raises(ValueError, match="damping"):
         piazzi.dogleg(system, x0, damping="x")
+    with pytest.raises(ValueError, match="first_trial"):
+        piazzi.dogleg(system, x0, first_trial="x")
     with pytest.raises(ValueError, match="radius"):
         piazzi.dogleg(system, x0, initial_radius=0.0)
 

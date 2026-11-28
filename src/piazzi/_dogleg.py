@@ -144,6 +144,7 @@ def dogleg(
     max_radius: float = 1e16,
     min_gain: float = 1e-3,
     max_rejections: int = 20,
+    first_trial: str = "auto",
     damping: str = "identity",
     solve_dtype: torch.dtype = torch.float64,
     solve_device: str | torch.device = "cpu",
@@ -159,18 +160,23 @@ def dogleg(
     once, for the Gauss-Newton step, and computes the Cauchy step (the minimiser of the model
     along the steepest-descent direction). The trial step follows the path origin, Cauchy
     point, Gauss-Newton point as far as the trust region allows. A rejected trial costs no
-    further linear solve, only a value-only evaluation: the radius is halved and the same
-    path is truncated again, which is the method's advantage over Levenberg-Marquardt when
-    the linear solve is expensive.
+    further linear solve: the radius is halved and the same path is truncated again, which
+    is the method's advantage over Levenberg-Marquardt when the linear solve is expensive.
 
     The trust region is the ellipsoid ``|D s| <= radius``, with ``D = I``, or
     ``D = sqrt(diag(H))`` with ``damping="marquardt"`` (floored at ``1e-12 * max(diag H)``,
     as in Ceres Solver). The gain ratio ``rho`` (actual over predicted decrease) drives the
     radius, as in Ceres: a trial is accepted when ``rho > min_gain``, the radius is halved
     after an accepted step with ``rho < 0.25`` and raised to at least three times the step
-    after one with ``rho > 0.75``, and halved after a rejected one. As in
-    :func:`piazzi.gauss_newton`, the trial after an accepted step evaluates the full system
-    (it is usually accepted), and later trials of the same iteration are value-only.
+    after one with ``rho > 0.75``, and halved after a rejected one.
+
+    Evaluations: the first trial from a linearisation either evaluates the full system (the
+    bet that it is accepted, which saves a second evaluation at that point) or only the
+    value (when rejections are common, a rejected full evaluation wastes the gradient and
+    ``H``). ``first_trial="auto"`` bets on the full system after a first trial that was
+    accepted, and on the value after one that was rejected. Every later trial from the same
+    linearisation is value-only, and an accepted value-only trial is followed by a full
+    evaluation at that point.
 
     The Gauss-Newton step is solved with a ridge of ``mu * D^2`` (``mu * mean(diag H)`` for
     ``D = I``), starting from ``1e-8``: it is raised by a factor of 10 when the solve fails,
@@ -191,7 +197,12 @@ def dogleg(
     ``8 * eps * |loss|``, for it. These are the rules of :func:`piazzi.gauss_newton`, with the
     Gauss-Newton step, always available here, as the estimate of the distance to the minimiser;
     they end a float32 run at its minimiser. A Gauss-Newton step with a ridge above ``1e-3`` is
-    no such estimate and ends no run. A trial with a non-finite value is never accepted, and a
+    no such estimate and ends no run. Where the Gauss-Newton step is no distance estimate at
+    all (a singular ``H`` at the minimiser, for example ``r = x^2 + 5``), the trust region
+    collapses instead, and a trial step below ``step_tol`` with a predicted decrease below the
+    rounding noise, whose value did not measurably rise, ends the run as converged (message
+    ``predicted decrease below rounding noise``): no step at that scale can improve the loss.
+    A trial with a non-finite value is never accepted, and a
     non-finite value at ``x0`` stops the run at once.
 
     ``H`` may be a sparse COO or CSR tensor, as for :func:`piazzi.gauss_newton`.
@@ -227,6 +238,9 @@ def dogleg(
             ``min_relative_decrease``). Default: ``1e-3``
         max_rejections (int, optional): stop after this many rejected trials in a row.
             Default: ``20``
+        first_trial (str, optional): what the first trial from a linearisation evaluates:
+            ``"system"`` (the full system), ``"value"`` (the value only) or ``"auto"`` (see
+            above). Default: ``"auto"``
         damping (str, optional): ``"identity"`` (``D = I``) or ``"marquardt"``
             (``D = sqrt(diag(H))``). Default: ``"identity"``
         solve_dtype (torch.dtype, optional): dtype of the linear solve.
@@ -264,6 +278,8 @@ def dogleg(
         raise ValueError(f"dogleg_type must be 'traditional' or 'subspace', got {dogleg_type!r}")
     if damping not in ("identity", "marquardt"):
         raise ValueError(f"damping must be 'identity' or 'marquardt', got {damping!r}")
+    if first_trial not in ("auto", "system", "value"):
+        raise ValueError(f"first_trial must be 'auto', 'system' or 'value', got {first_trial!r}")
     if not (initial_radius > 0 and max_radius > 0):
         raise ValueError("initial_radius and max_radius must be positive")
     callback = with_progress(callback, verbose)
@@ -397,6 +413,8 @@ def dogleg(
     new_model, rejections = True, 0
     model: Model | None = None
     gn_unmoved: bool | None = None
+    # Whether the first trial from a linearisation evaluates the full system: a bet that it is accepted.
+    full_first = first_trial != "value"
     aux_new, g_new, H_new = aux, g, H
     for it in range(max_iter):
         f_val, f_start = f.item(), f
@@ -413,7 +431,7 @@ def dogleg(
         moved = not torch.equal(x_new, x)
         if not moved:  # nothing to evaluate: a step that does not change x is never accepted
             f_new, have_sys = f, False
-        elif rejections == 0:
+        elif rejections == 0 and full_first:
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             have_sys = True
         else:
@@ -426,6 +444,8 @@ def dogleg(
         # minimiser), where the trust region collapses instead.
         stalled = small and math.isfinite(fn) and pred <= noise(f_val)
         accept = moved and math.isfinite(fn) and (rho > min_gain or (pred <= 0 and fn <= f_val) or small)
+        if first_trial == "auto" and rejections == 0:
+            full_first = accept  # bet on the full system after a first trial that was accepted, else value-only
         if accept:
             if not have_sys:
                 f_new, aux_new, g_new, H_new = eval_sys(x_new)

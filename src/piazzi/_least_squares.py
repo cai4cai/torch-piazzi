@@ -171,10 +171,13 @@ def least_squares(
             :func:`piazzi.least_squares_system`. Default: ``"irls"``
         manifold (Manifold, optional): keeps ``x`` on a manifold (see
             :class:`piazzi.Manifold`). Default: ``None``
-        **kwargs: other keyword arguments of :func:`piazzi.gauss_newton` (or of
-            :func:`piazzi.dogleg` with ``method="dogleg"``), such as
-            ``max_iter``, ``step_tol``, ``max_step``, ``damping``, ``linear_solver``,
-            ``callback`` or ``verbose``.
+        **kwargs: other keyword arguments of :func:`piazzi.gauss_newton`, or of
+            :func:`piazzi.dogleg` with ``method="dogleg"``. ``max_iter``, ``step_tol``,
+            ``damping``, ``linear_solver``, ``callback`` and ``verbose`` are common to both;
+            ``max_step``, ``tau``, ``gn_ridge`` and the line-search settings belong to
+            :func:`piazzi.gauss_newton`, and ``initial_radius`` and ``dogleg_type`` to
+            :func:`piazzi.dogleg`. A keyword the chosen method does not have raises a
+            :class:`TypeError`.
 
     Returns:
         OptimizeResult: as for :func:`piazzi.gauss_newton`. ``result.fun`` is the cost, not

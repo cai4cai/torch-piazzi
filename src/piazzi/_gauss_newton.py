@@ -153,6 +153,7 @@ def gauss_newton(
         - :func:`piazzi.least_squares`: the high-level interface, which builds ``system`` from
           residuals with :func:`piazzi.least_squares_system` and passes its other keyword arguments
           here.
+        - :func:`piazzi.dogleg`: a trust-region method on the same systems.
 
     Example::
 
