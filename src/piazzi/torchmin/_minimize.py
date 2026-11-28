@@ -24,6 +24,12 @@ METHODS = ("bfgs", "l-bfgs", "cg", "newton-cg", "newton-exact", "dogleg", "trust
 _HISTORY = 32
 
 
+# torchmin's default gradient tolerance per method (Newton's methods have none: 1e-5 is the
+# default of its quasi-Newton ones), and the fraction of the gradient at x0 that also counts as small.
+_GTOL = dict.fromkeys(METHODS, 1e-5) | {"dogleg": 1e-4, "trust-ncg": 1e-4, "trust-exact": 1e-4, "trust-krylov": 1e-4}
+_GRAD_RTOL = 1e-3
+
+
 @contextlib.contextmanager
 def quiet_torchmin_warnings():
     """Silence a deprecation warning that torchmin's exact trust-region solver raises on every call.
@@ -35,6 +41,17 @@ def quiet_torchmin_warnings():
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", r"torch\.triangular_solve is deprecated", UserWarning, r"torchmin")
         yield
+
+
+def _clone_tree(aux):
+    """Clone every tensor in a (nested) dict / list / tuple."""
+    if isinstance(aux, torch.Tensor):
+        return aux.clone()
+    if isinstance(aux, dict):
+        return {k: _clone_tree(v) for k, v in aux.items()}
+    if isinstance(aux, (list, tuple)):
+        return type(aux)(_clone_tree(v) for v in aux)
+    return aux
 
 
 def minimize(
@@ -89,12 +106,18 @@ def minimize(
         and trust-region methods are autograd backward passes through the graph kept from
         the evaluation, not evaluations of ``fun``, and are not counted. The trust-region
         methods compute the gradient and the Hessian at every trial point, rejected ones
-        included. ``converged`` is torchmin's ``success`` and the final value is finite;
-        note that for ``bfgs``, ``l-bfgs``, ``newton-cg`` and ``newton-exact`` it includes
-        stopping on a step or a decrease below ``xtol``, which is weaker than a small gradient.
-        ``message`` is torchmin's, and ``raw`` is torchmin's own result. If the final
-        point was not among the last evaluations (which only happens when a callback stops
-        the run), ``fun`` is evaluated there once more and the counts include it.
+        included. ``converged`` is torchmin's ``success`` with two more checks: the final value is
+        finite, and the max-norm of the gradient there is at most ``options["gtol"]`` (torchmin's
+        default for the method if absent: ``1e-4`` for the trust-region methods, ``1e-5``
+        otherwise) or ``1e-3`` times the max-norm of the gradient at ``x0``,
+        whichever is larger. This matters for ``bfgs``, ``l-bfgs``,
+        ``newton-cg`` and ``newton-exact``, which also report success when a step or a decrease falls below
+        ``xtol``; such a stall at a large gradient is not converged, and ``message`` says so.
+        ``message`` is otherwise torchmin's, and ``raw`` is torchmin's own result. Those methods
+        stop on ``xtol`` before moving to the last trial point, so ``x`` is then the previous
+        iterate, and the last ``info.x`` the callback saw can differ from it. If the final
+        point was not among the last evaluations (this can only happen when a callback
+        stops the run), ``fun`` is evaluated there once more and the counts include it.
 
     See Also:
         - :func:`piazzi.minimize`: the native interface with the same calling convention.
@@ -120,6 +143,7 @@ def minimize(
             raise ValueError(f"options[{key!r}] is not supported: pass callback= to piazzi.torchmin.minimize")
     like, shape = check_x0(x0)  # like: an owned flat copy
     counts = {"fg": 0}
+    first_grad: list[float] = []  # max-norm of the gradient at x0, the scale for the convergence check
     history: collections.deque = collections.deque(maxlen=_HISTORY)  # (flat x, loss, aux)
 
     def wrapped(x):
@@ -127,7 +151,12 @@ def minimize(
         if x.requires_grad:
             # torchmin copies the gradient in place, which fails when autograd returns an expanded
             # view (the gradient of a sum, say): hand it a contiguous one.
-            x.register_hook(lambda g: g.contiguous().clone())
+            def contiguous(g):
+                if not first_grad:
+                    first_grad.append(g.abs().max().item())
+                return g.contiguous().clone()
+
+            x.register_hook(contiguous)
         # torchmin updates the value it gets in place (``f[...] = f_new``), so keep our own copies.
         history.append((x.detach().reshape(-1).clone(), loss.detach().clone(), detach_tree(aux)))
         counts["fg"] += 1
@@ -154,7 +183,7 @@ def minimize(
             xflat.clone().reshape(shape),
             loss.clone(),
             state["start"],
-            aux,
+            _clone_tree(aux),
             not torch.equal(xflat, state["x"]),
             counts["fg"],
             0,
@@ -165,7 +194,7 @@ def minimize(
         assert callback is not None  # on_iteration is only passed to torchmin when there is a callback
         stop = bool(callback(info))
         if stop:
-            state["stopped"] = (state["x"], loss, aux)
+            state["stopped"] = (state["x"], found)
         return stop
 
     with quiet_torchmin_warnings():
@@ -180,8 +209,7 @@ def minimize(
     found = None
     if state["stopped"] is not None:
         # torchmin returns the iterate before the one the callback stopped at; report the one it saw.
-        xflat, loss, aux = state["stopped"]
-        found = (loss, aux)
+        xflat, found = state["stopped"]
     else:
         found = lookup(xflat)
     if found is None:
@@ -191,16 +219,24 @@ def minimize(
         counts["fg"] += 1
         found = (loss.detach().clone(), detach_tree(aux))
     loss, aux = found
-    converged = bool(res.success) and bool(torch.isfinite(loss))
+    message = str(res.message)
+    converged = bool(res.success) and bool(torch.isfinite(loss)) and state["stopped"] is None
+    grad = getattr(res, "grad", None)
+    if converged and grad is not None and first_grad:
+        gmax = grad.abs().max().item()
+        limit = max(options.get("gtol", _GTOL[method]), _GRAD_RTOL * first_grad[0])
+        if not gmax <= limit:
+            converged = False
+            message += f" (but the gradient max-norm is {gmax:.2e}, above {limit:.2e}: not a minimiser)"
     return OptimizeResult(
         x=xflat.reshape(shape),
         fun=loss,
-        aux=aux,
+        aux=_clone_tree(aux),
         n_iter=int(res.nit),
         n_fun_grad=counts["fg"],
         n_fun=0,
         n_system=0,
-        converged=converged and state["stopped"] is None,
-        message=str(res.message),
+        converged=converged,
+        message=message,
         raw=res,
     )

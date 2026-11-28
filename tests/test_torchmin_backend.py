@@ -20,6 +20,8 @@ needs_torchmin = pytest.mark.skipif(pzt is None, reason="pytorch-minimize is not
 # trust-krylov is left out of the problem tests: torchmin 0.1.0 raises "reducible T matrix
 # encountered" when its Lanczos process exhausts the space (see test_trust_krylov_upstream_failure).
 METHODS = ["bfgs", "l-bfgs", "cg", "newton-cg", "newton-exact", "dogleg", "trust-ncg", "trust-exact"]
+# BFGS and L-BFGS also stop on |f change| <= xtol (1e-8 by default), which can be before the gradient is small.
+STRICT = {"bfgs": {"xtol": 1e-14, "gtd_tol": 0.0}, "l-bfgs": {"xtol": 1e-14, "gtd_tol": 0.0}}
 SCALAR_IDS = [p.name for p in SCALAR_PROBLEMS]
 
 
@@ -35,7 +37,7 @@ def test_problems(problem, method):
     """SciPy: CheckOptimize (entropy), test_rosenbrock, test_result_x_shape_when_len_x_is_one."""
     if (problem.name, method) == ("entropy", "dogleg"):
         pytest.skip("torchmin's dogleg fails its Cholesky factorisation on a Hessian that is not positive definite")
-    res = pzt.minimize(problem.fun, problem.x0, method, options={"max_iter": 2000})
+    res = pzt.minimize(problem.fun, problem.x0, method, options={"max_iter": 2000, **STRICT.get(method, {})})
     assert res.converged, res.message
     assert res.x.shape == problem.x0.shape and res.x.dtype == problem.x0.dtype
     assert res.fun.item() == pytest.approx(problem.fun(problem.x_opt).item(), abs=1e-6)
@@ -189,3 +191,47 @@ def test_trust_krylov_upstream_failure():
     """torchmin 0.1.0's trust-krylov raises when its Lanczos process breaks down; piazzi does not hide it."""
     with pytest.raises(RuntimeError, match="reducible"):
         pzt.minimize(rosen, torch.tensor([-1.2, 1.0], dtype=F64), "trust-krylov")
+
+
+@needs_torchmin
+@pytest.mark.parametrize("method", ["bfgs", "l-bfgs", "newton-exact"])
+def test_xtol_stall_at_a_large_gradient_is_not_converged(method):
+    options = {"xtol": 0.5}  # torchmin then reports success after a step or a decrease below 0.5
+    res = pzt.minimize(rosen, torch.tensor([-1.2, 1.0], dtype=F64), method, options=options)
+    assert res.raw.success and res.raw.grad.abs().max() > 1e-2
+    assert not res.converged and "not a minimiser" in res.message
+
+
+@needs_torchmin
+def test_converged_scale_invariant():
+    scale = 1e-9
+    res = pzt.minimize(lambda x: scale * rosen(x), torch.tensor([-1.2, 1.0], dtype=F64), "bfgs", options={"xtol": 0.5})
+    assert not res.converged
+
+
+@needs_torchmin
+def test_callback_stop_without_a_recorded_evaluation_evaluates_again(monkeypatch):
+    from piazzi.torchmin import _minimize
+
+    monkeypatch.setattr(_minimize, "_HISTORY", 0)  # every lookup misses
+    res = pzt.minimize(rosen, torch.tensor([-1.2, 1.0], dtype=F64), "bfgs", callback=lambda info: info.iteration == 1)
+    assert torch.isfinite(res.fun) and torch.allclose(res.fun, rosen(res.x))
+    assert res.n_fun_grad == res.raw.nfev + 1
+
+
+@needs_torchmin
+def test_aux_is_not_shared_between_callback_and_result():
+    seen = []
+
+    def callback(info):
+        seen.append(info.aux["r"])
+        info.aux["r"].zero_()  # a callback is free to scribble on what it is handed
+
+    res = pzt.minimize(
+        lambda x: (rosen(x), {"r": x.detach() * 1.0}),
+        torch.tensor([-1.2, 1.0], dtype=F64),
+        "bfgs",
+        has_aux=True,
+        callback=callback,
+    )
+    assert torch.equal(res.aux["r"], res.x) and res.aux["r"].abs().sum() > 0
