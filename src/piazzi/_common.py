@@ -168,13 +168,21 @@ def retract(manifold, x: torch.Tensor, d: torch.Tensor) -> torch.Tensor:
 
 @contextlib.contextmanager
 def quiet_jvp_warnings():
-    """Silence a spurious deprecation warning on the first forward-mode AD call.
+    """Silence a spurious warning about ``torch.jit.script`` on forward-mode AD calls.
 
-    The first forward-mode AD call makes torch load its JVP decompositions, which call the
-    deprecated torch.jit.script internally in torch 2.15 and earlier. Fixed upstream by
+    Forward-mode AD makes torch load its JVP decompositions, which call ``torch.jit.script``
+    internally in torch 2.15 and earlier. That warns that ``torch.jit.script`` is deprecated
+    and, on Python 3.14 and later, that it "is not supported in Python 3.14+". Neither
+    applies to piazzi, which never scripts anything itself. Fixed upstream by
     https://github.com/pytorch/pytorch/pull/203621 (landed 2026-11-09, after 2.15.0); drop
-    this filter once the minimum torch version includes it.
+    this filter once the minimum torch version includes it, after checking that neither
+    warning appears on the newest Python in CI.
     """
     with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", r"`torch\.jit\.script` is deprecated", FutureWarning, r"torch\.jit")
+        warnings.filterwarnings(
+            "ignore",
+            r"`torch\.jit\.script` is (deprecated|not supported in Python 3\.14\+)",
+            FutureWarning,
+            r"torch\.jit",
+        )
         yield
