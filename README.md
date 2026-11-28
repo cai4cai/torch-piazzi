@@ -15,7 +15,7 @@
 
 ```bash
 pip install "piazzi @ git+https://github.com/cai4cai/torch-piazzi"
-pip install "piazzi[scipy,sparse] @ git+https://github.com/cai4cai/torch-piazzi"  # optional backends and sparse CG
+pip install "piazzi[scipy,torchmin,sparse] @ git+https://github.com/cai4cai/torch-piazzi"  # optional backends and sparse CG
 ```
 
 ## Example
@@ -43,7 +43,7 @@ print(res.x, res.message)  # tensor([2.5026, 1.3005]) step below step_tol; loss=
 - **[Manifolds](https://cai4cai.github.io/torch-piazzi/guide/manifolds.html):** keep rotations and poses on SO(3) and SE(3), as Ceres's `Manifold` does, with batched exp/log maps.
 - **[Large sparse problems](https://cai4cai.github.io/torch-piazzi/guide/sparse.html):** sparse normal equations, conjugate gradients and custom linear solvers such as a Schur complement.
 - **[Devices and precision](https://cai4cai.github.io/torch-piazzi/guide/devices-precision.html):** run the objective in float32 on CUDA or Apple MPS, and solve the normal equations in float64 on the CPU or on the GPU.
-- **[`torch.optim` optimisers](https://cai4cai.github.io/torch-piazzi/guide/torch-optim.html)** and **[SciPy backends](https://cai4cai.github.io/torch-piazzi/guide/backends.html)** behind the same interface, to compare methods on the same problem.
+- **[`torch.optim` optimisers](https://cai4cai.github.io/torch-piazzi/guide/torch-optim.html)** and **[SciPy and pytorch-minimize backends](https://cai4cai.github.io/torch-piazzi/guide/backends.html)** behind the same interface, to compare methods on the same problem.
 
 ## Notebooks
 

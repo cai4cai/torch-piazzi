@@ -3352,10 +3352,14 @@ scipy = [
 sparse = [
     { name = "torchsparsegradutils" },
 ]
+torchmin = [
+    { name = "pytorch-minimize" },
+]
 
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "pytorch-minimize" },
     { name = "ruff" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
@@ -3367,6 +3371,7 @@ docs = [
     { name = "myst-nb" },
     { name = "myst-parser", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "myst-parser", version = "5.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pytorch-minimize" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -3387,6 +3392,7 @@ notebooks = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pytorch-minimize" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -3395,15 +3401,17 @@ notebooks = [
 
 [package.metadata]
 requires-dist = [
+    { name = "pytorch-minimize", marker = "extra == 'torchmin'", specifier = ">=0.1.0" },
     { name = "scipy", marker = "extra == 'scipy'", specifier = ">=1.11" },
     { name = "torch", specifier = ">=2.1" },
     { name = "torchsparsegradutils", marker = "extra == 'sparse'", specifier = ">=0.2.7" },
 ]
-provides-extras = ["scipy", "sparse"]
+provides-extras = ["scipy", "sparse", "torchmin"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8" },
+    { name = "pytorch-minimize", specifier = ">=0.1.0" },
     { name = "ruff", specifier = "==0.17.6" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "torchsparsegradutils", specifier = ">=0.2.7" },
@@ -3412,6 +3420,7 @@ docs = [
     { name = "furo", specifier = ">=2024.8.6" },
     { name = "myst-nb", specifier = ">=1.1" },
     { name = "myst-parser", specifier = ">=3" },
+    { name = "pytorch-minimize", specifier = ">=0.1.0" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "sphinx", specifier = ">=7.4" },
     { name = "sphinx-copybutton", specifier = ">=0.5.2" },
@@ -3423,6 +3432,7 @@ notebooks = [
     { name = "matplotlib", specifier = ">=3.7" },
     { name = "nbclient", specifier = ">=0.10" },
     { name = "numpy", specifier = ">=1.24" },
+    { name = "pytorch-minimize", specifier = ">=0.1.0" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "torchsparsegradutils", specifier = ">=0.2.7" },
 ]
@@ -3835,6 +3845,25 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/21/25/5473e46b179f8e8b4ad3aeeb36773d1701b7770eaf5e5bc2025c7303b598/python_json_logger-4.2.0.tar.gz", hash = "sha256:e371ebe22ec01e289850102091a2b1f6fc9e655c7f1f5f29073936756c290afa", size = 18211, upload-time = "2026-08-15T11:36:38.232Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/55/6467fde553886cb293e41538f3a8b4e4fd4688c6df242cf982162d8367fb/python_json_logger-4.2.0-py3-none-any.whl", hash = "sha256:158a52126fcd6869e09574d2b66272666f3dc8f468c62637ef9a1fa883719cb9", size = 14988, upload-time = "2026-08-15T11:36:36.821Z" },
+]
+
+[[package]]
+name = "pytorch-minimize"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "torch", version = "2.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dd/80/cc2ecebca52d111ae19f34e2b615693cd62a5de13d5e85e86a41cea4b04c/pytorch_minimize-0.1.0.tar.gz", hash = "sha256:8586c2050c7a0ec0d34178c1bd40206a4f9402f63ff6628f42481d6d5f2200c2", size = 53586, upload-time = "2026-01-23T21:46:21.813Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/e4/7a4589d15a59782c0e9656a96bb6a55f6f50ed432371d89801bf8b6dcc90/pytorch_minimize-0.1.0-py3-none-any.whl", hash = "sha256:806e2d16177bf630d1c1cfb3fd7b09a26b3a78aad3bb7405595fb9b8e34ce7be", size = 69254, upload-time = "2026-01-23T21:46:19.099Z" },
 ]
 
 [[package]]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
 from typing import Any
 
@@ -14,14 +15,19 @@ from ._torch_optim import torch_optimizer
 
 __all__ = ["MINIMIZE_METHODS", "minimize"]
 
-#: Scalar minimisers available to :func:`piazzi.minimize` by name (currently
-#: ``"lbfgs_armijo"``). To add one, register a callable
+#: Scalar minimisers available to :func:`piazzi.minimize` by name: ``"lbfgs_armijo"``, and
+#: ``"torchmin-<method>"`` once :mod:`piazzi.torchmin` is imported (``piazzi.minimize`` does so
+#: when it meets such a name). To add one, register a callable
 #: ``method(fun, x0, *, has_aux, callback, **options)`` under a lower-case name.
 #: :func:`piazzi.minimize` passes ``manifold=`` only when one is given, so a method that
 #: doesn't support manifolds need not accept it.
 MINIMIZE_METHODS: dict[str, Callable[..., OptimizeResult]] = {
     "lbfgs_armijo": lbfgs_armijo,
 }
+
+# Optional backends register their methods, under a prefix, when their module is imported;
+# a prefixed name that isn't registered yet imports the module that owns the prefix.
+_BACKEND_MODULES = {"torchmin-": "piazzi.torchmin"}
 
 
 def minimize(
@@ -59,9 +65,10 @@ def minimize(
             the shape of ``x0``.
         x0 (Tensor): starting point, of any shape, or a point on ``manifold``.
         method (str or type, optional): a name from :data:`piazzi.MINIMIZE_METHODS` (case
-            insensitive; ``"lbfgs_armijo"``, that is :func:`piazzi.lbfgs_armijo`, is
-            currently the only one), or a :class:`torch.optim.Optimizer` subclass (the
-            class, not an instance). Default: ``"lbfgs_armijo"``
+            insensitive; ``"lbfgs_armijo"``, that is :func:`piazzi.lbfgs_armijo`, or
+            ``"torchmin-bfgs"``, ``"torchmin-trust-exact"``, ... for the methods of
+            :func:`piazzi.torchmin.minimize`, which needs pytorch-minimize), or a
+            :class:`torch.optim.Optimizer` subclass (the class, not an instance). Default: ``"lbfgs_armijo"``
 
     Keyword Args:
         has_aux (bool, optional): whether ``fun`` also returns an auxiliary output (any tree
@@ -103,6 +110,10 @@ def minimize(
             f" (the class, not an instance), got {method!r}"
         )
     key = method.lower()
+    if key not in MINIMIZE_METHODS:
+        for prefix, module in _BACKEND_MODULES.items():
+            if key.startswith(prefix):
+                importlib.import_module(module)  # registers its methods; raises if the backend is missing
     if key not in MINIMIZE_METHODS:
         raise ValueError(f"method must be one of {sorted(MINIMIZE_METHODS)}, got {method!r}")
     extra = {} if manifold is None else {"manifold": manifold}  # registered methods need not know manifolds

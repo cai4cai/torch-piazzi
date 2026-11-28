@@ -3,8 +3,8 @@ API reference
 
 .. currentmodule:: piazzi
 
-Everything below is importable from ``piazzi``, except the optional SciPy backend in
-``piazzi.scipy``. Start with the high-level interfaces; the method-specific solvers are the
+Everything below is importable from ``piazzi``, except the optional backends in
+``piazzi.scipy`` and ``piazzi.torchmin``. Start with the high-level interfaces; the method-specific solvers are the
 algorithms they run, for when you need a method's full control.
 
 :doc:`High-level interfaces <interfaces>`
@@ -99,6 +99,18 @@ Requires the ``piazzi[scipy]`` extra.
    t2n
    n2t
 
+:doc:`pytorch-minimize backend <torchmin>`
+------------------------------------------
+
+Requires the ``piazzi[torchmin]`` extra.
+
+.. currentmodule:: piazzi.torchmin
+
+.. autosummary::
+   :nosignatures:
+
+   minimize
+
 .. toctree::
    :hidden:
 
@@ -109,3 +121,4 @@ Requires the ``piazzi[scipy]`` extra.
    manifolds
    linear-solvers
    scipy
+   torchmin

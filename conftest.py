@@ -9,6 +9,9 @@ import piazzi
 
 # The SciPy wrappers import SciPy at module level: skip their docstrings when the extra is missing.
 collect_ignore_glob = [] if importlib.util.find_spec("scipy") else ["src/piazzi/scipy/*"]
+# Likewise for pytorch-minimize.
+if not importlib.util.find_spec("torchmin"):
+    collect_ignore_glob.append("src/piazzi/torchmin/*")
 
 
 @pytest.fixture(autouse=True)
