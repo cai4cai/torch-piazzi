@@ -133,8 +133,10 @@ def least_squares(
       ``LieTensor``) and the cost fell by less than ``step_tol`` times itself (a heavily damped
       step is small without being near a minimiser), or when the cost is exactly zero;
     - an iteration whose cost is not below the previous one is rejected (the previous point is
-      restored), and the run converges if the step is below ``step_tol`` and the cost rose by no
-      more than rounding noise (``8 * eps * cost``). Any other such step ends
+      restored), and the run converges if the step is below ``max(step_tol, sqrt(eps))`` (what the cost can
+      resolve; ``eps`` is the machine epsilon of the dtype) and the cost rose by no
+      more than rounding noise (``8 * eps * cost``), or if ``x`` moved by no more than
+      ``8 * eps * max|x|``. Any other such step ends
       the run unconverged: Gauss-Newton takes full steps without a line search and can
       diverge, and Levenberg-Marquardt stops there after ``reject`` rejected trials. The run
       then returns the best point it accepted;
@@ -263,6 +265,10 @@ def least_squares(
         # Relative to the scale of x (a tangent step on a LieTensor is already scale free).
         scale = 1.0 if is_lie else max(float(x_old.abs().max()), float(x_new.abs().max()))
         small = step < step_tol * (step_tol + scale)
+        # A step that did not lower the cost is at a minimiser when it is below what the cost can resolve:
+        # the cost is flat to rounding in x to about sqrt(eps), which in float32 is above step_tol.
+        unmoved = step <= 8 * eps * scale  # x barely moved: any change of the cost is rounding
+        resolved = step < max(step_tol, math.sqrt(eps)) * (step_tol + scale)
         if not math.isfinite(cost):
             accepted, stop, converged, message = False, True, False, "the cost became non-finite"
         elif cost < cost_old:
@@ -276,7 +282,7 @@ def least_squares(
                 stop, converged, message = True, True, "the cost is zero"
             elif small and cost_old - cost <= max(noise, step_tol * cost_old):
                 stop, converged, message = True, True, "the step is below step_tol"
-        elif small and cost <= cost_old + noise and not solver_failed and not pp_solver.grad_zero:
+        elif ((resolved and cost <= cost_old + noise) or unmoved) and not solver_failed and not pp_solver.grad_zero:
             # No measurable decrease from a small step: a minimiser to working precision. Keep the previous point.
             accepted, stop, converged, message = False, True, True, "the step is below step_tol, with no decrease"
         else:

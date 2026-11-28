@@ -16,15 +16,16 @@ import warnings
 
 try:
     # Importing PyPose triggers two warnings of its own, which the test suite turns into errors:
-    # torch's deprecation of torch.jit.script (PyPose uses it for its Lie group kernels), and an
+    # torch's deprecation of torch.jit.script (PyPose uses it for its Lie group kernels; torch says "not
+    # supported" on Python 3.14 and later), and an
     # invalid escape sequence in a docstring, reported only while compiling pypose/testing/comparison.py,
     # that is, on the first import after installation without byte-compiled files. Both are PyPose's
     # (https://github.com/pypose/pypose); drop the filters once a release no longer triggers them.
     with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", r"`torch\.jit\.script` is deprecated", FutureWarning)
+        warnings.filterwarnings("ignore", r"`torch\.jit\.script` is (deprecated|not supported)", FutureWarning)
         # A DeprecationWarning before Python 3.12, a SyntaxWarning from then on.
-        warnings.filterwarnings("ignore", r"invalid escape sequence", DeprecationWarning)
-        warnings.filterwarnings("ignore", r"invalid escape sequence", SyntaxWarning)
+        warnings.filterwarnings("ignore", r".*invalid escape sequence", DeprecationWarning)
+        warnings.filterwarnings("ignore", r".*invalid escape sequence", SyntaxWarning)
         import pypose  # noqa: F401
 except ImportError as e:
     raise ImportError(

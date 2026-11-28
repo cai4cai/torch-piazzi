@@ -22,7 +22,7 @@ THETA = torch.tensor([2.5, 1.3], dtype=torch.float64)
 def exp_fit(dtype=torch.float64):
     t = torch.linspace(0, 4, 40, dtype=dtype)
     y = (THETA.to(dtype)[0] * torch.exp(-THETA.to(dtype)[1] * t)) + 0.01 * torch.sin(7 * t)
-    return (lambda th: th[0] * torch.exp(-th[1] * t) - y), torch.tensor([1.0, 0.5], dtype=dtype)
+    return (lambda th: th[0] * torch.exp(-th[1] * t) - y), torch.tensor([2.0, 1.0], dtype=dtype)
 
 
 def rosenbrock_residuals(x):
@@ -274,16 +274,20 @@ def test_solver_failure_message_has_the_cause():
 
 @needs_pypose
 def test_rejected_step_on_a_lie_tensor_restores_the_point():
-    # PyPose's Gauss-Newton overshoots on this rotation (no line search) and the wrapper must undo the step.
-    target = pp.Exp(pp.se3(torch.tensor([0.5, 0.2, -0.3, 2.0, 0.0, 0.0], dtype=torch.float64)))
+    # A penalty that switches on away from the origin makes Gauss-Newton's full step go uphill, whatever the
+    # PyPose version: the wrapper must undo it.
+    target = pp.Exp(pp.se3(torch.tensor([0.5, 0.2, -0.3, 0.1, 0.0, 0.0], dtype=torch.float64)))
     x0 = pp.identity_SE3(dtype=torch.float64)
+
+    def fun(X):
+        r = (X.Inv() @ target).Log().tensor()
+        return r + 1e3 * (X.translation().norm() > 0.1).to(r.dtype)
+
     last = []
-    res = pzp.least_squares(lambda X: (X.Inv() @ target).Log(), x0, method="gn", callback=last.append)
+    res = pzp.least_squares(fun, x0, method="gn", callback=last.append)
     assert not last[-1].accepted and not res.converged
     assert isinstance(res.x, pp.LieTensor) and res.x.ltype == x0.ltype
-    accepted = [i for i in last if i.accepted]
-    assert torch.equal(res.x.tensor(), accepted[-1].x.tensor())
-    assert torch.equal(last[-1].x.tensor(), res.x.tensor())
+    assert torch.equal(res.x.tensor(), x0.tensor()) and torch.equal(last[-1].x.tensor(), x0.tensor())
 
 
 @needs_pypose
