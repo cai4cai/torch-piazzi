@@ -54,7 +54,7 @@ GN_STALLS = pytest.mark.xfail(
 LSQ_CASES = [
     pytest.param(p, m, id=f"{p.name}-{m}", marks=GN_STALLS if (p.name, m) == ("bvp", "gn") else ())
     for p in LSQ_PROBLEMS
-    for m in ("lm", "gn")
+    for m in ("lm", "gn", "dogleg")
 ]
 
 
@@ -66,7 +66,7 @@ def test_least_squares_problems(problem, method):
     assert torch.isfinite(res.fun)
 
 
-@pytest.mark.parametrize("method", ["lm", "gn"])
+@pytest.mark.parametrize("method", ["lm", "gn", "dogleg"])
 def test_least_squares_full_result(method):
     """SciPy: test_full_result (cost 12.5 at x = 0, where the Jacobian vanishes)."""
     res = piazzi.least_squares(fun_trivial, torch.tensor([2.0], dtype=F64), method=method, max_iter=500)
@@ -82,7 +82,7 @@ def test_least_squares_single_evaluation():
     assert res.n_system == 1 and res.n_fun == 0 and not res.converged
 
 
-@pytest.mark.parametrize("method", ["lm", "gn"])
+@pytest.mark.parametrize("method", ["lm", "gn", "dogleg"])
 def test_least_squares_starts_at_optimum(method):
     """x0 is the exact minimiser (zero residuals, so g = 0): stop before any step."""
     res = piazzi.least_squares(fun_rosenbrock, torch.ones(2, dtype=F64), method=method)
@@ -90,7 +90,7 @@ def test_least_squares_starts_at_optimum(method):
     assert res.converged and res.n_iter == 0 and res.message == "gradient is zero"
 
 
-@pytest.mark.parametrize("method", ["lm", "gn"])
+@pytest.mark.parametrize("method", ["lm", "gn", "dogleg"])
 @pytest.mark.parametrize("k", range(-4, 5))
 def test_least_squares_zero_step_at_nonzero_cost_minimiser(method, k):
     """Starting within rounding of a minimiser with nonzero residuals still converges.
@@ -108,7 +108,7 @@ def test_least_squares_zero_step_at_nonzero_cost_minimiser(method, k):
     assert res.n_iter <= 2
 
 
-@pytest.mark.parametrize("method", ["lm", "gn"])
+@pytest.mark.parametrize("method", ["lm", "gn", "dogleg"])
 def test_least_squares_zero_jacobian_at_x0(method):
     """At x0 = 0 the trivial problem has J = 0, so g = 0 and H = 0: x0 is already stationary."""
     res = piazzi.least_squares(fun_trivial, torch.zeros(1, dtype=F64), method=method)
@@ -131,7 +131,7 @@ def test_least_squares_rejects_complex_x0():
         piazzi.least_squares(fun_trivial, torch.tensor([1, 2]))  # integer
 
 
-@pytest.mark.parametrize("method", ["lm", "gn"])
+@pytest.mark.parametrize("method", ["lm", "gn", "dogleg"])
 def test_least_squares_respects_max_iter(method):
     """SciPy: test_nfev / test_respect_maxiter."""
     for max_iter in (1, 2, 3):
@@ -141,7 +141,7 @@ def test_least_squares_respects_max_iter(method):
         assert res.n_iter <= max_iter
 
 
-@pytest.mark.parametrize("method", ["lm", "gn"])
+@pytest.mark.parametrize("method", ["lm", "gn", "dogleg"])
 def test_least_squares_callback_does_not_alias(method):
     """SciPy: test_minimize_callback_copies_array; iterates seen by callbacks stay intact."""
     seen = []
@@ -157,7 +157,7 @@ def test_least_squares_callback_does_not_alias(method):
     assert torch.equal(xs[-1], res.x)
 
 
-@pytest.mark.parametrize("method", ["lm", "gn"])
+@pytest.mark.parametrize("method", ["lm", "gn", "dogleg"])
 def test_least_squares_nan_residuals(method):
     """SciPy: test_nan_values; NaN residuals end the run as not converged, without a crash."""
     res = piazzi.least_squares(lambda x: x * math.nan, torch.ones(2, dtype=F64), method=method)
@@ -165,7 +165,11 @@ def test_least_squares_nan_residuals(method):
     assert res.n_iter <= 1
 
 
-@pytest.mark.parametrize("method", ["lm", "gn"])
+# Lets the first step reach the bad region: a larger max_step, or trust region.
+LARGE_FIRST_STEP = {"lm": {"max_step": 10.0}, "gn": {"max_step": 10.0}, "dogleg": {"initial_radius": 10.0}}
+
+
+@pytest.mark.parametrize("method", ["lm", "gn", "dogleg"])
 def test_least_squares_nan_trial_point_is_rejected(method):
     """A trial point with NaN residuals must not be accepted; the solver backs off instead."""
 
@@ -173,7 +177,7 @@ def test_least_squares_nan_trial_point_is_rejected(method):
         # NaN added as a constant: torch.where(c, r * nan, r) would also give NaN gradients.
         return (x - 1) + torch.where(x > 1.5, math.nan, 0.0)
 
-    res = piazzi.least_squares(fun, torch.zeros(1, dtype=F64), method=method, max_step=10.0)
+    res = piazzi.least_squares(fun, torch.zeros(1, dtype=F64), method=method, **LARGE_FIRST_STEP[method])
     assert torch.allclose(res.x, torch.ones(1, dtype=F64), atol=1e-6), res
     assert torch.isfinite(res.fun)
 
@@ -270,7 +274,7 @@ def test_minimize_matches_scipy(problem, method):
 # -inf trial values (passing `<=` against any finite bound) must be rejected too.
 
 
-@pytest.mark.parametrize("method", ["lm", "gn"])
+@pytest.mark.parametrize("method", ["lm", "gn", "dogleg"])
 def test_gauss_newton_rejects_minus_inf_trial(method):
     seen = []
 
@@ -284,7 +288,10 @@ def test_gauss_newton_rejects_minus_inf_trial(method):
         seen.append(x.item())
         return system(x)[0]
 
-    res = piazzi.gauss_newton(system, torch.zeros(1, dtype=F64), method=method, max_step=10.0, value_fun=value_fun)
+    if method == "dogleg":
+        res = piazzi.dogleg(system, torch.zeros(1, dtype=F64), value_fun=value_fun, initial_radius=10.0)
+    else:
+        res = piazzi.gauss_newton(system, torch.zeros(1, dtype=F64), method=method, max_step=10.0, value_fun=value_fun)
     assert max(seen) > 1.5  # a -inf trial point was evaluated...
     assert torch.isfinite(res.fun) and torch.allclose(res.x, torch.ones(1, dtype=F64), atol=1e-6), res  # ...not kept
 

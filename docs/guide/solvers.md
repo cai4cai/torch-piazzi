@@ -3,13 +3,13 @@
 piazzi has two layers of solvers:
 
 - **High-level interfaces**, modelled on SciPy: {func}`~piazzi.least_squares` and {func}`~piazzi.minimize`. They take the objective in its most natural form (residuals or a scalar), choose a method by name, and pass the method's settings through. Start here.
-- **Method-specific solvers**: {func}`~piazzi.gauss_newton`, {func}`~piazzi.levenberg_marquardt` and {func}`~piazzi.lbfgs_armijo`. These are the algorithms the high-level interfaces call, with every setting exposed. Call them directly when you build the curvature yourself, or want one method's full control.
+- **Method-specific solvers**: {func}`~piazzi.gauss_newton`, {func}`~piazzi.levenberg_marquardt`, {func}`~piazzi.dogleg` and {func}`~piazzi.lbfgs_armijo`. These are the algorithms the high-level interfaces call, with every setting exposed. Call them directly when you build the curvature yourself, or want one method's full control.
 
 ## High-level interfaces
 
 | Function | Objective | Methods |
 |---|---|---|
-| {func}`~piazzi.least_squares` | residuals `r(x)`, with an optional robust loss | Like {func}`scipy.optimize.least_squares`. `method="lm"` (default, Levenberg-Marquardt) or `"gn"` (Gauss-Newton), run by {func}`~piazzi.gauss_newton` on the normal equations that {func}`~piazzi.least_squares_system` builds by forward-mode autodiff. Other keyword arguments (`max_iter`, `step_tol`, `damping`, `linear_solver`, ...) go to {func}`~piazzi.gauss_newton`. |
+| {func}`~piazzi.least_squares` | residuals `r(x)`, with an optional robust loss | Like {func}`scipy.optimize.least_squares`. `method="lm"` (default, Levenberg-Marquardt), `"gn"` (Gauss-Newton) or `"dogleg"` (trust region), run by {func}`~piazzi.gauss_newton` (or {func}`~piazzi.dogleg`) on the normal equations that {func}`~piazzi.least_squares_system` builds by forward-mode autodiff. Other keyword arguments (`max_iter`, `step_tol`, `damping`, `linear_solver`, ...) go to the method's solver. |
 | {func}`~piazzi.minimize` | scalar `f(x)`, gradient from autograd | Like {func}`scipy.optimize.minimize`. `method` names a solver in {data}`piazzi.MINIMIZE_METHODS` (currently `"lbfgs_armijo"`, the default), with its settings in `options`. `method` can also be a `torch.optim` optimiser class (see {doc}`torch-optim`). |
 
 Both accept `manifold=` (see {doc}`manifolds`), `has_aux=` and `callback=`, and return an {class}`~piazzi.OptimizeResult`. {func}`piazzi.scipy.least_squares` and {func}`piazzi.scipy.minimize` have the same calling conventions and run SciPy's methods instead (see {doc}`backends`).
@@ -20,6 +20,7 @@ Both accept `manifold=` (see {doc}`manifolds`), `has_aux=` and `callback=`, and 
 |---|---|---|
 | {func}`~piazzi.gauss_newton` with `method="lm"`, or {func}`~piazzi.levenberg_marquardt` | `system(x) -> (loss, g, H)` | Levenberg-Marquardt with Nielsen's damping update. |
 | {func}`~piazzi.gauss_newton` with `method="gn"` | `system(x) -> (loss, g, H)` | Gauss-Newton with Armijo backtracking. |
+| {func}`~piazzi.dogleg` | `system(x) -> (loss, g, H)` | Powell's dog-leg trust region, as in Ceres Solver: one linear solve per accepted step, and a rejected trial only halves the radius and re-truncates the same path (its first trial adapts between a full and a value-only evaluation, `first_trial="auto"`). `dogleg_type="subspace"` minimises the model over the span of the gradient and the Gauss-Newton step. |
 | {func}`~piazzi.lbfgs_armijo` | `f(x)`, gradient from autograd | L-BFGS with Armijo backtracking. It usually costs one evaluation per iteration. Each trial point is evaluated with its autograd graph, and the backward pass runs only at the accepted point, so a rejected trial costs a forward pass. |
 
 {func}`~piazzi.least_squares_system` is the building block between the two layers: it turns residuals into the `system(x) -> (loss, g, H)` that {func}`~piazzi.gauss_newton` needs, that is `(0.5‖r‖², Jᵀr, JᵀJ)` or its robust equivalent.
@@ -32,15 +33,17 @@ Both accept `manifold=` (see {doc}`manifolds`), `has_aux=` and `callback=`, and 
 
 `method="lm"` (the default) adapts its damping to how well the model predicts each step, which makes it the safer choice. `method="gn"` takes the undamped step with a backtracking line search; with SciPy's curvature model and mostly outlying residuals it copes better than Levenberg-Marquardt (see {doc}`least-squares`).
 
+`method="dogleg"` (trust region) solves the normal equations once per accepted step and reuses that solve for every rejected trial, so it suits problems where the linear solve costs more than an objective evaluation. It wants an accurate Gauss-Newton step: use a direct linear solver, or a tight tolerance for conjugate gradients (Ceres refuses iterative solvers for dog-leg). It takes `initial_radius` (default 1, in the units of `x`) instead of `max_step`. The trust region is the ellipsoid `‖D s‖ ≤ radius`, with `D = I` or, with `damping="marquardt"`, `D = sqrt(diag(H))`.
+
 ## Damping and step limits
 
-`damping="marquardt"` scales the Levenberg-Marquardt damping (and the Gauss-Newton ridge) by `diag(H)`, as Ceres does. Use it when parameters have very different units; it plays the role of SciPy's `x_scale="jac"`.
+`damping="marquardt"` scales the Levenberg-Marquardt damping (and the Gauss-Newton ridge) by `diag(H)`, and the dog-leg trust region by `sqrt(diag(H))`, as Ceres does. Use it when parameters have very different units; it plays the role of SciPy's `x_scale="jac"`.
 
-Steps are capped so that no coordinate moves more than `max_step` (default 1). Set it for the units of your problem: a large translation in millimetres needs a larger cap.
+Steps of Gauss-Newton and Levenberg-Marquardt are capped so that no coordinate moves more than `max_step` (default 1); the dog-leg trust region plays that role for `method="dogleg"`. Set it for the units of your problem: a large translation in millimetres needs a larger cap.
 
 ## Results and stopping
 
-Every solver returns an {class}`~piazzi.OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. `converged` means a minimiser was reached to working precision: the step fell below `step_tol`, or the gradient is zero. The step judged against `step_tol` is one that estimates the distance to the minimiser (the full Gauss-Newton or L-BFGS step, or Levenberg-Marquardt's undamped Gauss-Newton step), so heavy damping (a large `tau`) or a long backtracking line search cannot end a run early, and a step too small to change `x` at all is never accepted. In float32, Gauss-Newton, Levenberg-Marquardt and L-BFGS also recognise a minimiser once the predicted decrease falls below the rounding noise of the loss, or once a Newton-like step no longer moves `x` beyond a few units in the last place of each entry (message `step below the resolution of x`). The second rule catches minimisers near a zero residual, where the loss's rounding noise is absolute rather than relative to the loss.
+Every solver returns an {class}`~piazzi.OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. `converged` means a minimiser was reached to working precision: the step fell below `step_tol`, or the gradient is zero. The step judged against `step_tol` is one that estimates the distance to the minimiser (the full Gauss-Newton or L-BFGS step, Levenberg-Marquardt's undamped Gauss-Newton step, or the dog-leg method's Gauss-Newton step), so heavy damping (a large `tau`) or a long backtracking line search cannot end a run early, and a step too small to change `x` at all is never accepted. In float32, Gauss-Newton, Levenberg-Marquardt, dog-leg and L-BFGS also recognise a minimiser once the predicted decrease falls below the rounding noise of the loss (for dog-leg, of a trial step below `step_tol`, which also ends runs whose Gauss-Newton step is no distance estimate because `H` is singular at the minimiser), or once a Newton-like step no longer moves `x` beyond a few units in the last place of each entry (message `step below the resolution of x`). The second rule catches minimisers near a zero residual, where the loss's rounding noise is absolute rather than relative to the loss.
 
 The evaluation counts are split by kind, because their costs differ: `n_fun_grad` (value and gradient), `n_fun` (value only, as in a line search) and `n_system` (normal equations).
 

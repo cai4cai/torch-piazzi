@@ -69,7 +69,26 @@ def rosen(x):
 
 @device_dtype
 @placement
-@pytest.mark.parametrize("method", ["gn", "lm"])
+@pytest.mark.parametrize("damping", ["identity", "marquardt"])
+def test_dogleg_subspace(device, dtype, placement, damping):
+    """A small initial radius keeps the Gauss-Newton step outside it, so the 2-D boundary problem runs."""
+    fun, x0 = exp_problem(device, dtype)
+    res = piazzi.least_squares(
+        fun,
+        x0,
+        method="dogleg",
+        dogleg_type="subspace",
+        damping=damping,
+        initial_radius=0.05,
+        **solve_options(placement, device, dtype),
+    )
+    assert res.converged, res.message
+    assert_result(res, device, dtype, EXP_SOLUTION)
+
+
+@device_dtype
+@placement
+@pytest.mark.parametrize("method", ["gn", "lm", "dogleg"])
 @pytest.mark.parametrize("damping", ["identity", "marquardt"])
 def test_least_squares(device, dtype, placement, method, damping):
     fun, x0 = exp_problem(device, dtype)

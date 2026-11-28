@@ -33,6 +33,7 @@ build the normal equations yourself.
 
    gauss_newton
    levenberg_marquardt
+   dogleg
    lbfgs_armijo
    least_squares_system
 

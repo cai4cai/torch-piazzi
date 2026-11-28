@@ -9,6 +9,7 @@ import torch
 import torch.utils._pytree as pytree
 
 from ._common import OptimizeResult, quiet_jvp_warnings
+from ._dogleg import dogleg
 from ._gauss_newton import gauss_newton
 from ._losses import Loss, check_loss, rho_and_derivatives, robust_cost
 from ._manifolds import Manifold
@@ -160,7 +161,8 @@ def least_squares(
             ``rho(z)``, as in :func:`piazzi.least_squares_system`. Default: ``"linear"``
         f_scale (float, optional): soft margin between inlier and outlier residuals, in the
             units of ``r``. Default: ``1.0``
-        method (str, optional): ``"lm"`` (Levenberg-Marquardt) or ``"gn"`` (Gauss-Newton).
+        method (str, optional): ``"lm"`` (Levenberg-Marquardt), ``"gn"`` (Gauss-Newton) or
+            ``"dogleg"`` (Powell's dog-leg trust region, :func:`piazzi.dogleg`).
             Default: ``"lm"``
         has_aux (bool, optional): whether ``fun`` also returns an auxiliary output (any tree
             of tensors), returned detached in ``result.aux`` and ``info.aux``.
@@ -169,9 +171,13 @@ def least_squares(
             :func:`piazzi.least_squares_system`. Default: ``"irls"``
         manifold (Manifold, optional): keeps ``x`` on a manifold (see
             :class:`piazzi.Manifold`). Default: ``None``
-        **kwargs: other keyword arguments of :func:`piazzi.gauss_newton`, such as
-            ``max_iter``, ``step_tol``, ``max_step``, ``damping``, ``linear_solver``,
-            ``callback`` or ``verbose``.
+        **kwargs: other keyword arguments of :func:`piazzi.gauss_newton`, or of
+            :func:`piazzi.dogleg` with ``method="dogleg"``. ``max_iter``, ``step_tol``,
+            ``damping``, ``linear_solver``, ``callback`` and ``verbose`` are common to both;
+            ``max_step``, ``tau``, ``gn_ridge`` and the line-search settings belong to
+            :func:`piazzi.gauss_newton`, and ``initial_radius`` and ``dogleg_type`` to
+            :func:`piazzi.dogleg`. A keyword the chosen method does not have raises a
+            :class:`TypeError`.
 
     Returns:
         OptimizeResult: as for :func:`piazzi.gauss_newton`. ``result.fun`` is the cost, not
@@ -180,6 +186,7 @@ def least_squares(
     See Also:
         - :func:`piazzi.gauss_newton`: the method this runs (``method="lm"`` or ``"gn"``), which
           documents the other keyword arguments.
+        - :func:`piazzi.dogleg`: the method that ``method="dogleg"`` runs.
         - :func:`piazzi.least_squares_system`: the normal equations this builds from ``fun``.
         - :func:`piazzi.scipy.least_squares`: the same problem with SciPy's solvers.
 
@@ -201,4 +208,6 @@ def least_squares(
         return robust_cost((out[0] if has_aux else out).reshape(-1), loss, f_scale)
 
     kwargs.setdefault("value_fun", value_fun)
+    if method == "dogleg":
+        return dogleg(system, x0, has_aux=has_aux, manifold=manifold, **kwargs)
     return gauss_newton(system, x0, method=method, has_aux=has_aux, manifold=manifold, **kwargs)
