@@ -36,6 +36,7 @@ classifiers = [
 [project.optional-dependencies]
 # Third-party backends, each importable as a piazzi subpackage (e.g. piazzi.scipy).
 scipy = ["scipy>=1.11"]
+torchmin = ["pytorch-minimize>=0.1.0"]
 # Gauss-Newton and Levenberg-Marquardt of PyPose (piazzi.pypose).
 pypose = ["pypose>=0.9"]
 # Iterative sparse solvers (piazzi.cg_solver, the default for a sparse Hessian).
@@ -47,12 +48,13 @@ Repository = "https://github.com/cai4cai/torch-piazzi"
 Issues = "https://github.com/cai4cai/torch-piazzi/issues"
 
 [dependency-groups]
-dev = ["pyright[nodejs]==1.1.414", "pypose>=0.9", "pytest>=8", "ruff==0.17.6", "scipy>=1.11", "torchsparsegradutils>=0.2.7"]
+dev = ["pyright[nodejs]==1.1.414", "pypose>=0.9", "pytest>=8", "pytorch-minimize>=0.1.0", "ruff==0.17.6", "scipy>=1.11", "torchsparsegradutils>=0.2.7"]
 notebooks = [
     "jupyterlab>=4",
     "matplotlib>=3.7",
     "nbclient>=0.10",
     "numpy>=1.24",
+    "pytorch-minimize>=0.1.0",
     "pypose>=0.9",
     "scipy>=1.11",
     "torchsparsegradutils>=0.2.7",
@@ -61,6 +63,7 @@ docs = [
     "furo>=2024.8.6",
     "myst-nb>=1.1",
     "myst-parser>=3",
+    "pytorch-minimize>=0.1.0",
     "pypose>=0.9",
     "scipy>=1.11",
     "sphinx>=7.4",

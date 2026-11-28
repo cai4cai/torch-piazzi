@@ -4,7 +4,7 @@ API reference
 .. currentmodule:: piazzi
 
 Everything below is importable from ``piazzi``, except the optional backends in
-``piazzi.scipy`` and ``piazzi.pypose``. Start with the high-level interfaces; the method-specific solvers are the
+``piazzi.scipy``, ``piazzi.pypose`` and ``piazzi.torchmin``. Start with the high-level interfaces; the method-specific solvers are the
 algorithms they run, for when you need a method's full control.
 
 :doc:`High-level interfaces <interfaces>`
@@ -112,6 +112,18 @@ Requires the ``piazzi[pypose]`` extra.
 
    least_squares
 
+:doc:`pytorch-minimize backend <torchmin>`
+------------------------------------------
+
+Requires the ``piazzi[torchmin]`` extra.
+
+.. currentmodule:: piazzi.torchmin
+
+.. autosummary::
+   :nosignatures:
+
+   minimize
+
 .. toctree::
    :hidden:
 
@@ -123,3 +135,4 @@ Requires the ``piazzi[pypose]`` extra.
    linear-solvers
    scipy
    pypose
+   torchmin
