@@ -47,13 +47,13 @@ print(res.x, res.message)  # tensor([2.5026, 1.3005]) step below step_tol; loss=
 
 ## Notebooks
 
-The notebooks in [`notebooks/`](notebooks) run in Google Colab, or locally after `uv sync --group notebooks`. They are also rendered in the [documentation](https://cai4cai.github.io/torch-piazzi/examples/index.html).
+The notebooks in [`notebooks/`](https://github.com/cai4cai/torch-piazzi/tree/main/notebooks) run in Google Colab, or locally after `uv sync --group notebooks`. They are also rendered in the [documentation](https://cai4cai.github.io/torch-piazzi/examples/index.html).
 
 | Notebook | |
 |---|---|
-| [Robust nonlinear regression](notebooks/robust_regression.ipynb): robust losses, checked against `scipy.optimize.least_squares` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/robust_regression.ipynb) |
-| [The Rosenbrock function](notebooks/rosenbrock.ipynb): L-BFGS variants versus Gauss-Newton and Levenberg-Marquardt, and SciPy's methods | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/rosenbrock.ipynb) |
-| [Bundle adjustment](notebooks/bundle_adjustment.ipynb): 49 cameras on SE(3), sparse normal equations, CG and Schur solvers, on the CPU and a GPU | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/bundle_adjustment.ipynb) |
+| [Robust nonlinear regression](https://github.com/cai4cai/torch-piazzi/blob/main/notebooks/robust_regression.ipynb): robust losses, checked against `scipy.optimize.least_squares` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/robust_regression.ipynb) |
+| [The Rosenbrock function](https://github.com/cai4cai/torch-piazzi/blob/main/notebooks/rosenbrock.ipynb): L-BFGS variants versus Gauss-Newton and Levenberg-Marquardt, and SciPy's methods | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/rosenbrock.ipynb) |
+| [Bundle adjustment](https://github.com/cai4cai/torch-piazzi/blob/main/notebooks/bundle_adjustment.ipynb): 49 cameras on SE(3), sparse normal equations, CG and Schur solvers, on the CPU and a GPU | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cai4cai/torch-piazzi/blob/main/notebooks/bundle_adjustment.ipynb) |
 
 ## Related work
 
@@ -67,7 +67,7 @@ uv run pytest
 uv run ruff check .
 ```
 
-See the [contributing page](https://cai4cai.github.io/torch-piazzi/contributing.html) and [AGENTS.md](AGENTS.md) for the full checks and conventions. Planned work is tracked in the [issues](https://github.com/cai4cai/torch-piazzi/issues).
+See the [contributing page](https://cai4cai.github.io/torch-piazzi/contributing.html) and [AGENTS.md](https://github.com/cai4cai/torch-piazzi/blob/main/AGENTS.md) for the full checks and conventions. Planned work is tracked in the [issues](https://github.com/cai4cai/torch-piazzi/issues).
 
 ## Licence
 

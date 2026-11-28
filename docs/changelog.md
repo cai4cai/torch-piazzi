@@ -17,3 +17,4 @@ piazzi is pre-alpha and not yet on PyPI. Development so far:
 - This documentation site.
 - Requires Python 3.11 and PyTorch 2.15 or later, and CI tests the lowest allowed versions of every dependency.
 - `print_progress`, a callback that prints a table of a run's progress, and `verbose=` on every solver and wrapper to use it.
+- Dynamic PEP 440 versioning from git tags via `hatch-vcs`, and a Trusted Publishing GitHub Actions workflow for TestPyPI and PyPI.
