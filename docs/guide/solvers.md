@@ -40,10 +40,28 @@ Steps are capped so that no coordinate moves more than `max_step` (default 1). S
 
 ## Results and stopping
 
-Every solver returns an {class}`~piazzi.OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. `converged` means a minimiser was reached to working precision: the step fell below `step_tol`, or the gradient is zero. In float32, Gauss-Newton, Levenberg-Marquardt and L-BFGS also recognise a minimiser once the predicted decrease falls below the rounding noise of the loss, or once a Newton-like step no longer moves `x` beyond a few units in the last place of each entry (message `step below the resolution of x`). The second rule catches minimisers near a zero residual, where the loss's rounding noise is absolute rather than relative to the loss.
+Every solver returns an {class}`~piazzi.OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. `converged` means a minimiser was reached to working precision: the step fell below `step_tol`, or the gradient is zero. The step judged against `step_tol` is one that estimates the distance to the minimiser (the full Gauss-Newton or L-BFGS step, or Levenberg-Marquardt's undamped Gauss-Newton step), so heavy damping (a large `tau`) or a long backtracking line search cannot end a run early, and a step too small to change `x` at all is never accepted. In float32, Gauss-Newton, Levenberg-Marquardt and L-BFGS also recognise a minimiser once the predicted decrease falls below the rounding noise of the loss, or once a Newton-like step no longer moves `x` beyond a few units in the last place of each entry (message `step below the resolution of x`). The second rule catches minimisers near a zero residual, where the loss's rounding noise is absolute rather than relative to the loss.
 
 The evaluation counts are split by kind, because their costs differ: `n_fun_grad` (value and gradient), `n_fun` (value only, as in a line search) and `n_system` (normal equations).
 
 ## Callbacks
 
 `callback(info)` receives an {class}`~piazzi.IterationInfo` after every iteration, accepted or not: the current point and value, the value at the start of the iteration, whether the step was accepted, and the evaluation counts so far (`info.n_fun_grad`, `info.n_fun`, `info.n_system`). Plot progress against those counts rather than iterations, which hide the evaluations a line search spends. Return `True` to stop the run.
+
+To watch a run, pass `verbose=True` to any solver or wrapper. It prints a table of the run, one row per iteration, in the spirit of Ceres Solver's per-iteration summary, and your own `callback` still runs after it:
+
+```python
+t = torch.linspace(0, 1, 20, dtype=torch.float64)
+y = 2 * torch.exp(-3 * t)
+x0 = torch.tensor([1.0, 1.0], dtype=torch.float64)
+res = piazzi.least_squares(lambda p: p[0] * torch.exp(-p[1] * t) - y, x0, verbose=True)
+```
+
+```text
+ iter            fun  rel_decrease      step  n_fun_grad   n_fun  n_system
+    0   3.876612e-01     7.208e-01  accepted           0       0         2
+    1   3.996416e-03     9.897e-01  accepted           0       0         3
+    ...
+```
+
+Pass `verbose=10` to print every tenth iteration. The table comes from {func}`piazzi.print_progress`, a ready-made callback: use `callback=piazzi.print_progress(file=...)` to write it elsewhere than standard output.

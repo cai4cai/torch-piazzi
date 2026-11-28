@@ -11,6 +11,7 @@ import torch
 from ._common import Callback, OptimizeResult
 from ._lbfgs import lbfgs_armijo
 from ._manifolds import Manifold
+from ._progress import with_progress
 from ._torch_optim import torch_optimizer
 
 __all__ = ["MINIMIZE_METHODS", "minimize"]
@@ -38,6 +39,7 @@ def minimize(
     has_aux: bool = False,
     manifold: Manifold | None = None,
     callback: Callback | None = None,
+    verbose: bool | int = False,
     options: dict[str, Any] | None = None,
 ) -> OptimizeResult:
     """Minimise a scalar function of a tensor, like :func:`scipy.optimize.minimize`.
@@ -79,6 +81,9 @@ def minimize(
             :class:`torch.optim.Optimizer` methods. Default: ``None``
         callback (Callable, optional): called with an :class:`piazzi.IterationInfo` after
             every iteration; returning ``True`` stops the run. Default: ``None``
+        verbose (bool or int, optional): print a table of the run's progress with
+            :func:`piazzi.print_progress` before calling ``callback``: ``True`` prints every
+            iteration and an integer ``k`` every ``k``-th one. Default: ``False``
         options (dict, optional): settings for the method, for example
             ``{"max_iter": 500, "step_tol": 1e-8}``. Default: ``None``
 
@@ -100,6 +105,7 @@ def minimize(
         >>> res.x
         tensor([1.0000, 1.0000], dtype=torch.float64)
     """
+    callback = with_progress(callback, verbose)  # here, so that every method prints the same way
     if isinstance(method, type) and issubclass(method, torch.optim.Optimizer):
         if manifold is not None:
             raise ValueError("manifold= is not supported with torch.optim optimisers; use method='lbfgs_armijo'")

@@ -4,7 +4,7 @@ API reference
 .. currentmodule:: piazzi
 
 Everything below is importable from ``piazzi``, except the optional backends in
-``piazzi.scipy`` and ``piazzi.torchmin``. Start with the high-level interfaces; the method-specific solvers are the
+``piazzi.scipy``, ``piazzi.pypose`` and ``piazzi.torchmin``. Start with the high-level interfaces; the method-specific solvers are the
 algorithms they run, for when you need a method's full control.
 
 :doc:`High-level interfaces <interfaces>`
@@ -44,6 +44,7 @@ build the normal equations yourself.
 
    OptimizeResult
    IterationInfo
+   print_progress
 
 :doc:`Robust losses <losses>`
 -----------------------------
@@ -99,6 +100,18 @@ Requires the ``piazzi[scipy]`` extra.
    t2n
    n2t
 
+:doc:`PyPose backend <pypose>`
+------------------------------
+
+Requires the ``piazzi[pypose]`` extra.
+
+.. currentmodule:: piazzi.pypose
+
+.. autosummary::
+   :nosignatures:
+
+   least_squares
+
 :doc:`pytorch-minimize backend <torchmin>`
 ------------------------------------------
 
@@ -121,4 +134,5 @@ Requires the ``piazzi[torchmin]`` extra.
    manifolds
    linear-solvers
    scipy
+   pypose
    torchmin

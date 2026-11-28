@@ -10,6 +10,7 @@ import scipy.optimize
 import torch
 
 from .._common import OptimizeResult, check_x0, detach_tree, split_aux
+from .._progress import with_progress
 from ._convert import bounds_to_scipy, iteration_callback, n2t, t2n
 from ._least_squares import _bind
 
@@ -30,6 +31,7 @@ def minimize(
     bounds=None,
     has_aux: bool = False,
     callback: Callable | None = None,
+    verbose: bool | int = False,
     options: dict[str, Any] | None = None,
     **kwargs,
 ) -> OptimizeResult:
@@ -75,6 +77,9 @@ def minimize(
             for the native solvers; returning ``True`` stops the run. ``aux`` is set when
             SciPy's last evaluation was at the iterate. TNC reports only ``x`` (``fun`` is
             then NaN unless known) and cannot be stopped. Default: ``None``
+        verbose (bool or int, optional): print a table of the run's progress with
+            :func:`piazzi.print_progress` before calling ``callback``: ``True`` prints every
+            iteration and an integer ``k`` every ``k``-th one. Default: ``False``
         options (dict, optional): SciPy's method-specific options. Default: ``None``
         args (tuple, optional): as in SciPy, extra arguments for ``fun`` and callable
             ``jac``, ``hess`` and ``hessp``. Default: ``()``
@@ -104,6 +109,7 @@ def minimize(
         >>> res.x
         tensor([1.0000, 1.0000], dtype=torch.float64)
     """
+    callback = with_progress(callback, verbose)
     like, shape = check_x0(x0)
     if jac == "cs" or hess == "cs":
         raise ValueError("complex-step derivatives ('cs') are not supported: use 'autodiff' or finite differences")
@@ -170,7 +176,9 @@ def minimize(
 
         def autodiff_hess(xn):
             counts["sys"] += 1
-            return t2n(torch.autograd.functional.hessian(scalar, to_torch(xn))).reshape(n, n)
+            hess_t = torch.autograd.functional.hessian(scalar, to_torch(xn))
+            assert isinstance(hess_t, torch.Tensor)  # a tuple only for a tuple of inputs; the input is one tensor
+            return t2n(hess_t).reshape(n, n)
 
         scipy_hess = autodiff_hess
     elif callable(hess) and not isinstance(hess, scipy.optimize.HessianUpdateStrategy):

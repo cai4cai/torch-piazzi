@@ -12,6 +12,7 @@ import torch
 
 from .._common import OptimizeResult, check_x0, quiet_jvp_warnings
 from .._losses import Loss, check_loss, rho_and_derivatives
+from .._progress import with_progress
 from ._convert import bounds_to_scipy, iteration_callback, n2t, t2n, to_scipy_array
 
 __all__ = ["least_squares"]
@@ -35,6 +36,7 @@ def least_squares(
     f_scale: float = 1.0,
     bounds=(-np.inf, np.inf),
     callback: Callable | None = None,
+    verbose: bool | int = False,
     **kwargs,
 ) -> OptimizeResult:
     """Run :func:`scipy.optimize.least_squares` on a residual function written in PyTorch.
@@ -68,6 +70,10 @@ def least_squares(
             :class:`piazzi.IterationInfo`, as for the native solvers (``fun`` is the cost;
             ``aux`` is ``None``); returning ``True`` stops the run. Needs SciPy 1.16 or
             later. Default: ``None``
+        verbose (bool or int, optional): print a table of the run's progress with
+            :func:`piazzi.print_progress` before calling ``callback``: ``True`` prints every
+            iteration and an integer ``k`` every ``k``-th one. It takes the place of SciPy's
+            own ``verbose``, and like ``callback`` needs SciPy 1.16 or later. Default: ``False``
         **kwargs: other keyword arguments of :func:`scipy.optimize.least_squares`
             (``method``, ``ftol``, ``xtol``, ``gtol``, ``max_nfev``, ``x_scale``, ...).
             Tensors given as ``x_scale`` or ``diff_step`` are converted like ``bounds``.
@@ -97,6 +103,7 @@ def least_squares(
         tensor([2.5000, 1.3000], dtype=torch.float64)
     """
     check_loss(loss, f_scale)
+    callback = with_progress(callback, verbose)
     like, shape = check_x0(x0)
     if jac == "cs":
         raise ValueError("jac='cs' (complex step) is not supported: use 'autodiff' or a finite-difference scheme")

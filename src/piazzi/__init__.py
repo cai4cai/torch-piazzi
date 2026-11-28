@@ -13,6 +13,7 @@ from ._linear_solvers import LinearSolver, cg_solver, dense_solver
 from ._losses import LOSSES, robust_cost
 from ._manifolds import SE3, SO3, Euclidean, Manifold, Product, Subset, se3_exp, se3_log, so3_exp, so3_hat, so3_log
 from ._minimize import MINIMIZE_METHODS, minimize
+from ._progress import print_progress
 
 __version__ = "0.1.0.dev0"
 
@@ -37,6 +38,7 @@ __all__ = [
     "least_squares_system",
     "levenberg_marquardt",
     "minimize",
+    "print_progress",
     "robust_cost",
     "se3_exp",
     "se3_log",
