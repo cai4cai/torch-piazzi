@@ -7,7 +7,17 @@ from collections.abc import Callable
 
 import torch
 
-from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract, split_aux
+from ._common import (
+    Callback,
+    IterationInfo,
+    OptimizeResult,
+    check_x0,
+    detach_tree,
+    retract,
+    split_aux,
+    unmoved,
+    within,
+)
 from ._manifolds import Manifold
 
 __all__ = ["lbfgs_armijo"]
@@ -45,12 +55,19 @@ def lbfgs_armijo(
     curvature). If no decrease is found the memory is reset and the iterate does not move;
     the run then retries once with steepest descent. It stops after two failures in a row,
     after one failure of a steepest-descent step (a retry would repeat it exactly), or once
-    a step is below ``step_tol`` (max-norm). A failure counts as convergence when the loss
-    did not measurably go up (by more than ``8 * eps * |loss|`` in its dtype) and either
-    the first trial step was already below ``step_tol`` or its predicted decrease was below
-    that rounding noise: near the optimum of a float32 objective, the line search otherwise
-    keeps failing on noise. A trial point with a non-finite value never passes the line
-    search, and a non-finite value at ``x0`` stops the run at once.
+    a step is below ``step_tol`` (max-norm). The stop counts as convergence when the last
+    failed search from the L-BFGS memory showed a minimiser to working precision: its step,
+    which estimates the distance to the minimiser, left ``x`` unmoved (every entry within 64
+    units in the last place of its scale, ``|x|`` or the manifold's
+    :meth:`~piazzi.Manifold.entry_scale`, at a finite value), or the loss did not measurably
+    go up (by more than ``8 * eps * |loss|`` in its dtype) while that step was below
+    ``step_tol`` or predicted a decrease below that rounding noise. Near the optimum of a
+    float32 objective, the line search otherwise keeps failing on noise. That verdict
+    survives steepest-descent steps that succeed on noise, as long as ``x`` stays within
+    ``sqrt(eps)`` (per entry, at its scale) of where it was given, the precision to which a
+    minimiser is determined; an accepted step from memory, or moving further, clears it. A
+    trial point with a non-finite value never passes the line search, and a non-finite value
+    at ``x0`` stops the run at once.
 
     Args:
         fun (Callable): ``fun(x) -> loss``, or ``(loss, aux)`` with ``has_aux=True``, where
@@ -147,6 +164,7 @@ def lbfgs_armijo(
 
     def eval_value(xv):
         with torch.no_grad():
+            assert value_fun is not None  # only called with a value_fun
             loss = value_fun(xv.reshape(shape))
         if isinstance(loss, tuple):  # value_fun=fun with has_aux: drop the aux
             loss = loss[0]
@@ -176,7 +194,7 @@ def lbfgs_armijo(
         return result(0, True, "no free parameters")
     S: list[torch.Tensor] = []
     Y: list[torch.Tensor] = []
-    fails = 0
+    fails, stalled, x_stalled = 0, None, None
     eps = torch.finfo(g.dtype).eps
     for it in range(max_iter):
         f_val = f.item()
@@ -209,6 +227,9 @@ def lbfgs_armijo(
         pred, step0 = -t * gtd, t * d.abs().max().item()  # predicted decrease and size of the first trial
         x_new = retract(manifold, x, t * d)
         f_new, aux_new, pending = eval_trial(x_new)
+        # A step from the L-BFGS memory estimates the distance to the minimiser: if it leaves x
+        # unmoved (and its value is finite), x is a minimiser to working precision.
+        first_unmoved = used_memory and math.isfinite(f_new.item()) and unmoved(manifold, x, x_new)
         n_bt = 0
         while not armijo_ok(f_new.item(), f_val + c1 * t * gtd) and n_bt < max_backtracks:
             reject(pending)
@@ -231,19 +252,42 @@ def lbfgs_armijo(
             stop = callback is not None and callback(
                 IterationInfo(it, x.reshape(shape), f, f, aux, False, counts["fg"], counts["f"])
             )
+            # Whether this failure shows a minimiser to working precision. A failure from the
+            # L-BFGS memory gives the verdict; steepest-descent attempts, whose unscaled step and
+            # prediction say nothing about the distance to the minimiser, keep the verdict of the
+            # last such failure, even across a steepest-descent step that succeeded on noise.
+            noise = 8 * torch.finfo(f.dtype).eps * abs(f_val)
+            flat = math.isfinite(f_new.item()) and f_new.item() <= f_val + noise
+            verdict = None
+            if first_unmoved:
+                verdict = "step below the resolution of x"
+            elif flat and step0 < step_tol:
+                verdict = "step below step_tol"
+            elif flat and pred <= noise:
+                verdict = "predicted decrease below rounding noise"
+            if used_memory or stalled is None:
+                stalled, x_stalled = verdict, x
             if fails >= 2 or not used_memory:
-                noise = 8 * torch.finfo(f.dtype).eps * abs(f_val)
-                if math.isfinite(f_new.item()) and f_new.item() <= f_val + noise:
-                    if step0 < step_tol:
-                        return result(it + 1, True, "step below step_tol")
-                    if pred <= noise:
-                        return result(it + 1, True, "predicted decrease below rounding noise")
+                if stalled is not None:
+                    return result(it + 1, True, stalled)
                 message = "line search failed twice in a row" if fails >= 2 else "line search failed"
                 return result(it + 1, False, message)
             if stop:
                 return result(it + 1, False, "stopped by callback")
             continue
         fails = 0
+        # An earlier verdict holds across steepest-descent steps that succeed on noise at a noise
+        # floor, not across real progress: an accepted step from memory clears it, and so does
+        # leaving the neighbourhood where it was given. A minimiser is only determined to about
+        # sqrt(eps) (the loss is flat to second order), so within that distance (per entry, at
+        # its scale) every point is a minimiser to working precision. Near a zero residual the
+        # loss's noise is absolute, so the size of the decrease cannot tell noise from progress.
+        if (
+            stalled is not None
+            and x_stalled is not None
+            and (used_memory or not within(manifold, x_stalled, x_new, torch.finfo(x.dtype).eps ** 0.5))
+        ):
+            stalled = None
         if pending is None:  # accepted on a value_fun evaluation
             f_new, aux_new, g_new = eval_full(x_new)
         else:
