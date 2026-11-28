@@ -44,7 +44,7 @@ def test_import_error_without_pypose(monkeypatch):
 
 @needs_pypose
 @pytest.mark.parametrize("method", ["gn", "lm"])
-@pytest.mark.parametrize("dtype, tol", [(torch.float64, 1e-8), (torch.float32, 1e-3)])
+@pytest.mark.parametrize(("dtype", "tol"), [(torch.float64, 1e-8), (torch.float32, 1e-3)])
 def test_matches_native_solver(method, dtype, tol):
     fun, x0 = exp_fit(dtype)
     ref = piazzi.least_squares(fun, x0, method=method)

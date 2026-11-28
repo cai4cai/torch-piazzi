@@ -280,7 +280,7 @@ def test_so3_rotation_fit():
 
 def test_least_squares_system_tangent_shapes(registration):
     residuals, *_ = registration
-    loss, g, H = piazzi.least_squares_system(residuals, manifold=piazzi.SE3())(random_pose(4))
+    _, g, H = piazzi.least_squares_system(residuals, manifold=piazzi.SE3())(random_pose(4))
     assert g.shape == (6,) and H.shape == (6, 6)
     assert torch.linalg.matrix_rank(H).item() == 6
 

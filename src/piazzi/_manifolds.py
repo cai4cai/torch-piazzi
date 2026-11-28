@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import cast
 
 import torch
 
@@ -577,7 +578,9 @@ class Product(Manifold):
         Returns:
             list of Tensor: one block per factor, each in its factor's ``ambient_shape``.
         """
-        return [b.reshape(m.ambient_shape) for m, b in zip(self.manifolds, self._blocks(x), strict=True)]
+        # Every factor has a fixed ambient_shape: __init__ checks it (ambient_size).
+        shapes = [cast(tuple[int, ...], m.ambient_shape) for m in self.manifolds]
+        return [b.reshape(s) for s, b in zip(shapes, self._blocks(x), strict=True)]
 
     def join(self, *blocks: torch.Tensor) -> torch.Tensor:
         """Pack one block per factor into a flat point.

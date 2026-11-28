@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable
+from typing import cast
 
 import torch
 
@@ -108,12 +109,14 @@ def cg_solver(
         ) from err
 
     def solve(H, g, damping):
+        precond: Callable | None
         if preconditioner == "jacobi":
             inv_diag = 1.0 / (diagonal(H) + damping).clamp(min=torch.finfo(H.dtype).tiny)
 
-            def precond(v):
+            def jacobi(v):
                 return v * (inv_diag if v.dim() == 1 else inv_diag[:, None])
 
+            precond = jacobi
         elif preconditioner is None:
             precond = None
         else:
@@ -125,13 +128,17 @@ def cg_solver(
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", "CG terminated", UserWarning)
             try:
-                return linear_cg(
-                    matmul,
-                    -g,
-                    tolerance=tol,
-                    max_iter=max_iter,
-                    max_tridiag_iter=min(max_iter, 20),
-                    preconditioner=precond,
+                # Without the optional outputs, linear_cg returns the solution alone.
+                return cast(
+                    torch.Tensor,
+                    linear_cg(
+                        matmul,
+                        -g,
+                        tolerance=tol,
+                        max_iter=max_iter,
+                        max_tridiag_iter=min(max_iter, 20),
+                        preconditioner=precond,
+                    ),
                 )
             except RuntimeError as err:
                 if "breakdown" not in str(err):

@@ -259,6 +259,10 @@ def gauss_newton(
     gc, Hc = host(g), host(H)
     lam = tau * (diagonal(Hc).max().item() if damping == "identity" else 1.0)
     nu, rejections, have_sys = 2.0, 0, True
+    # Levenberg-Marquardt state carried across rejected trials. It is set whenever rejections == 0,
+    # which holds at the first iteration and after every accepted step, before it is read.
+    pred_first, first_unmoved, gn_checked = math.inf, False, None
+    aux_new, g_new, H_new = aux, g, H
     for it in range(max_iter):
         f_val, f_start = f.item(), f
         if not (all_finite(gc) and all_finite(Hc)):

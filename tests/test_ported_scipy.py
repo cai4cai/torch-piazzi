@@ -58,7 +58,7 @@ LSQ_CASES = [
 ]
 
 
-@pytest.mark.parametrize("problem, method", LSQ_CASES)
+@pytest.mark.parametrize(("problem", "method"), LSQ_CASES)
 def test_least_squares_problems(problem, method):
     """SciPy: test_basic, test_rosenbrock, test_rosenbrock_cropped, test_bvp, BroydenTridiagonal."""
     res = piazzi.least_squares(problem.fun, problem.x0, method=method, max_iter=500, step_tol=1e-8)

@@ -6,7 +6,7 @@ import contextlib
 import io
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import pypose as pp
 import torch
@@ -188,11 +188,14 @@ def least_squares(
     pp_solver = _make(_SOLVERS, pp.optim.solver, "solver", solver, solver_options)
     model = _Residual(fun, x0, has_aux)
     if method == "gn":
+        reject = 0
         opt = pp.optim.GaussNewton(model, solver=pp_solver, vectorize=vectorize)
     else:
         pp_strategy = _make(_STRATEGIES, pp.optim.strategy, "strategy", strategy, strategy_options)
-        extra = {} if reject is None else {"reject": reject}
-        opt = pp.optim.LevenbergMarquardt(model, solver=pp_solver, strategy=pp_strategy, vectorize=vectorize, **extra)
+        reject = 16 if reject is None else reject
+        opt = pp.optim.LevenbergMarquardt(
+            model, solver=pp_solver, strategy=pp_strategy, reject=reject, vectorize=vectorize
+        )
 
     is_lie = isinstance(x0, pp.LieTensor)
     eps = torch.finfo(x0.dtype).eps
@@ -207,6 +210,7 @@ def least_squares(
 
     with torch.no_grad():
         r0 = model()  # the residuals at x0, memoised: PyPose's first step reuses them
+    assert model.memo is not None  # set by the evaluation above
     aux = model.memo[2]
     cost_t = 0.5 * r0.square().sum()
     cost = float(cost_t)
@@ -222,7 +226,7 @@ def least_squares(
         with contextlib.redirect_stdout(out):  # PyPose prints when its linear solver fails
             loss = opt.step(None)
         solver_failed = "Linear solver failed" in out.getvalue()
-        cost_t = (0.5 * loss).detach().clone()
+        cost_t = (0.5 * torch.as_tensor(loss)).detach().clone()  # PyPose's stubs say float; it is a tensor
         cost = float(cost_t)
         x_new = current()
         n_iter = it + 1
@@ -243,13 +247,13 @@ def least_squares(
                 "PyPose's linear solver failed"
                 if solver_failed
                 else "PyPose's step did not decrease the cost"
-                + (f" after {opt.reject} trial steps" if method == "lm" else " (no line search in Gauss-Newton)")
+                + (f" after {reject} trial steps" if method == "lm" else " (no line search in Gauss-Newton)")
             )
         if not accepted:  # undo the step exactly (PyPose's own undo is only up to rounding)
             with torch.no_grad():
                 model.x.copy_(x_old)
             if hasattr(opt, "loss"):
-                opt.loss = 2 * cost_old_t
+                cast(Any, opt).loss = 2 * cost_old_t  # PyPose's stubs infer int from its initial value
             cost, cost_t, aux = cost_old, cost_old_t, aux_old
         if callback is not None:
             info = IterationInfo(

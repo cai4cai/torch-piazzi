@@ -21,6 +21,7 @@ jobs:
       - run: uv pip install -e . --group dev
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync pyright
       - run: uv run --no-sync pytest -q
 
   # Only the required dependencies: the tests of the optional extras (SciPy, sparse CG) must skip.
