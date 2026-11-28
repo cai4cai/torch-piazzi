@@ -16,10 +16,15 @@ import warnings
 
 try:
     with warnings.catch_warnings():
-        # torchmin decorates a class with the deprecated torch.jit.script when it is imported (torch >= 2.10).
-        # Remove this filter once a torchmin release no longer does (upstream:
-        # https://github.com/rfeinman/pytorch-minimize, torchmin/function.py).
-        warnings.filterwarnings("ignore", r"`torch\.jit\.script` is deprecated", FutureWarning, r"torch\.jit")
+        # torchmin decorates a class with torch.jit.script when it is imported. That warns that it is deprecated
+        # and, on Python 3.14+, that it "is not supported in Python 3.14+". Remove this filter once a torchmin
+        # release no longer does (upstream: https://github.com/rfeinman/pytorch-minimize, torchmin/function.py).
+        warnings.filterwarnings(
+            "ignore",
+            r"`torch\.jit\.script` is (deprecated|not supported in Python 3\.14\+)",
+            FutureWarning,
+            r"torch\.jit",
+        )
         import torchmin  # noqa: F401
 except ImportError as e:
     raise ImportError(
