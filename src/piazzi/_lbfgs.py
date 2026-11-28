@@ -19,6 +19,7 @@ from ._common import (
     within,
 )
 from ._manifolds import Manifold
+from ._progress import with_progress
 
 __all__ = ["lbfgs_armijo"]
 
@@ -38,6 +39,7 @@ def lbfgs_armijo(
     max_step: float = 1.0,
     step_tol: float = 1e-5,
     callback: Callback | None = None,
+    verbose: bool | int = False,
 ) -> OptimizeResult:
     """Minimise a scalar function with L-BFGS and an Armijo backtracking line search.
 
@@ -107,6 +109,9 @@ def lbfgs_armijo(
         callback (Callable, optional): called with an :class:`piazzi.IterationInfo` after
             every iteration, accepted or not; returning ``True`` stops the run.
             Default: ``None``
+        verbose (bool or int, optional): print a table of the run's progress with
+            :func:`piazzi.print_progress` before calling ``callback``: ``True`` prints every
+            iteration and an integer ``k`` every ``k``-th one. Default: ``False``
 
     Returns:
         OptimizeResult: the solution ``x`` (shaped like ``x0``), the final loss ``fun`` and
@@ -125,6 +130,7 @@ def lbfgs_armijo(
         >>> res.x, res.converged
         (tensor([1.0000, 1.0000], dtype=torch.float64), True)
     """
+    callback = with_progress(callback, verbose)
     x, shape = check_x0(x0)
     counts = {"fg": 0, "f": 0}
 

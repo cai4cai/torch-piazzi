@@ -63,7 +63,7 @@ Every solver returns a {class}`piazzi.OptimizeResult`:
 
 ## Watching progress
 
-Pass `callback(info)` to record the iterates. It receives an {class}`piazzi.IterationInfo` after every iteration, accepted or not, with the evaluation counts so far. Return `True` to stop the run. To just watch a run, pass `callback=piazzi.print_progress()`, which prints one row per iteration.
+Pass `callback(info)` to record the iterates. It receives an {class}`piazzi.IterationInfo` after every iteration, accepted or not, with the evaluation counts so far. Return `True` to stop the run. To just watch a run, pass `verbose=True`, which prints one row per iteration.
 
 ```python
 history = []

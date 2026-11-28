@@ -10,6 +10,7 @@ import torch
 from ._common import Callback, IterationInfo, OptimizeResult, check_x0, detach_tree, retract, transfer, unmoved
 from ._linear_solvers import LinearSolver, cg_solver, dense_solver, diagonal, is_sparse, matvec
 from ._manifolds import Manifold
+from ._progress import with_progress
 
 __all__ = ["gauss_newton", "levenberg_marquardt"]
 
@@ -35,6 +36,7 @@ def gauss_newton(
     solve_device: str | torch.device = "cpu",
     linear_solver: LinearSolver | None = None,
     callback: Callback | None = None,
+    verbose: bool | int = False,
 ) -> OptimizeResult:
     """Gauss-Newton or Levenberg-Marquardt on user-supplied normal equations.
 
@@ -134,6 +136,9 @@ def gauss_newton(
         callback (Callable, optional): called with an :class:`piazzi.IterationInfo` after
             every iteration, accepted or not; returning ``True`` stops the run.
             Default: ``None``
+        verbose (bool or int, optional): print a table of the run's progress with
+            :func:`piazzi.print_progress` before calling ``callback``: ``True`` prints every
+            iteration and an integer ``k`` every ``k``-th one. Default: ``False``
 
     Returns:
         OptimizeResult: the solution ``x`` (shaped like ``x0``), the final loss ``fun`` and
@@ -158,6 +163,7 @@ def gauss_newton(
         raise ValueError("method must be 'gn' or 'lm'")
     if damping not in ("identity", "marquardt"):
         raise ValueError(f"damping must be 'identity' or 'marquardt', got {damping!r}")
+    callback = with_progress(callback, verbose)
     x, shape = check_x0(x0)
     counts = {"sys": 0, "f": 0}
 

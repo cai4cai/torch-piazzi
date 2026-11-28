@@ -170,8 +170,8 @@ def least_squares(
         manifold (Manifold, optional): keeps ``x`` on a manifold (see
             :class:`piazzi.Manifold`). Default: ``None``
         **kwargs: other keyword arguments of :func:`piazzi.gauss_newton`, such as
-            ``max_iter``, ``step_tol``, ``max_step``, ``damping``, ``linear_solver`` or
-            ``callback``.
+            ``max_iter``, ``step_tol``, ``max_step``, ``damping``, ``linear_solver``,
+            ``callback`` or ``verbose``.
 
     Returns:
         OptimizeResult: as for :func:`piazzi.gauss_newton`. ``result.fun`` is the cost, not
