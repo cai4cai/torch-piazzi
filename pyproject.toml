@@ -45,7 +45,7 @@ Repository = "https://github.com/cai4cai/torch-piazzi"
 Issues = "https://github.com/cai4cai/torch-piazzi/issues"
 
 [dependency-groups]
-dev = ["pyright==1.1.414", "pytest>=8", "ruff==0.17.6", "scipy>=1.11", "torchsparsegradutils>=0.2.7"]
+dev = ["pyright[nodejs]==1.1.414", "pytest>=8", "ruff==0.17.6", "scipy>=1.11", "torchsparsegradutils>=0.2.7"]
 notebooks = [
     "jupyterlab>=4",
     "matplotlib>=3.7",

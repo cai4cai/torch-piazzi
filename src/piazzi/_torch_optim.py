@@ -37,8 +37,9 @@ def torch_optimizer(
     """
     x, shape = check_x0(x0)
     lbfgs = issubclass(optimizer, torch.optim.LBFGS)
-    eval_budget = max_iter * 5 // 4 if max_eval is None else max_eval  # LBFGS only
+    eval_budget = 0  # read only for LBFGS
     if lbfgs:
+        eval_budget = max_iter * 5 // 4 if max_eval is None else max_eval
         optimizer_options["max_iter"] = 1
     elif max_eval is not None:
         raise ValueError("max_eval applies to torch.optim.LBFGS only")

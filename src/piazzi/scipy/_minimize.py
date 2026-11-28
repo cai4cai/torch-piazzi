@@ -174,6 +174,7 @@ def minimize(
 
         scipy_hess = autodiff_hess
     elif callable(hess) and not isinstance(hess, scipy.optimize.HessianUpdateStrategy):
+        # callable() narrows hess to object; here it is a user's hess(x) -> H, not a HessianUpdateStrategy.
         user_hess = cast(Callable[[torch.Tensor], torch.Tensor], hess)
 
         def callable_hess(xn):
