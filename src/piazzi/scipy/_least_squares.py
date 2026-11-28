@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import scipy.optimize
@@ -114,33 +115,37 @@ def least_squares(
             r = fun(n2t(xn, like).reshape(shape))
         return t2n(r.reshape(-1))
 
+    # What SciPy gets for jac and loss: a callable, or a name it understands.
+    jacobian: Any = jac
+    scipy_loss: Any = loss
     if jac == "autodiff":
 
-        def jacobian(xn):
+        def autodiff_jacobian(xn):
             counts["sys"] += 1
             with quiet_jvp_warnings():
                 J = torch.func.jacfwd(lambda xf: fun(xf.reshape(shape)).reshape(-1))(n2t(xn, like))
             return t2n(J)
 
+        jacobian = autodiff_jacobian
     elif callable(jac):
+        user_jac = jac
 
-        def jacobian(xn):
+        def callable_jacobian(xn):
             counts["sys"] += 1
             with torch.no_grad():
-                J = jac(n2t(xn, like).reshape(shape))
+                J = user_jac(n2t(xn, like).reshape(shape))
             return t2n(J.reshape(-1, like.numel()))
 
-    else:
-        jacobian = jac
+        jacobian = callable_jacobian
 
     if callable(loss):
+        user_loss = loss
 
-        def scipy_loss(z):
+        def torch_loss(z):
             # Evaluated in the dtype and on the device of x0, as with piazzi.least_squares.
-            return np.stack([t2n(v) for v in rho_and_derivatives(n2t(z, like), loss)])
+            return np.stack([t2n(v) for v in rho_and_derivatives(n2t(z, like), user_loss)])
 
-    else:
-        scipy_loss = loss
+        scipy_loss = torch_loss
 
     for key in ("x_scale", "diff_step"):
         if key in kwargs:

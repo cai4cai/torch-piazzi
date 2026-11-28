@@ -68,7 +68,7 @@ def test_scipy_first_order_methods(method, x0):
 
 @needs_scipy
 @pytest.mark.parametrize(
-    "method, kw",
+    ("method", "kw"),
     [
         ("Newton-CG", {"hess": "autodiff"}),
         ("trust-exact", {"hess": "autodiff"}),
