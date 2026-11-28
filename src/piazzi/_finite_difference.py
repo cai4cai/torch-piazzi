@@ -34,6 +34,7 @@ class _Counter:
         (exactly: ``P`` has full column rank). It costs no evaluation of ``fun``.
         """
         m = self.manifold
+        assert m is not None  # only called with a manifold
         zero = x.new_zeros(m.tangent_size(x))
         if zero.numel() == 0:  # every parameter fixed: no directions (jacfwd cannot differentiate in nothing)
             return x.new_zeros(0, x.numel())
@@ -50,8 +51,10 @@ class _Counter:
         ``manifold.plus(x, +-h * delta)``, so they lie on the manifold.
         """
         if self.manifold is None:
+            assert t is not None  # an ambient direction without a manifold
             d, h = self.step(x, t)
             return x + d, x - d, h
+        assert delta is not None  # tangent coordinates with a manifold
         h = self.default_eps(x.dtype)  # tangent coordinates are already relative to the point
         return self.manifold.plus(x, h * delta), self.manifold.plus(x, -h * delta), h
 
@@ -95,14 +98,16 @@ class _FiniteDifference(torch.autograd.Function):
         ctx.pinv = None  # computed on first use: the manifold's Jacobian is not needed for the value
 
     @staticmethod
-    def vmap(info, in_dims, state, x):
+    def vmap(info, in_dims, *args):
+        state, x = args
         # The user's function is a black box that cannot be batched: call it once per batch entry.
         if in_dims[1] is None:
             return _FiniteDifference.apply(state, x), None
         return torch.stack([_FiniteDifference.apply(state, xi) for xi in x.movedim(in_dims[1], 0)]), 0
 
     @staticmethod
-    def jvp(ctx, _, t):
+    def jvp(ctx, *grad_inputs):
+        t = grad_inputs[1]  # the tangent of x (state, the first input, has none)
         # Called by jacfwd once per tangent direction (under vmap), so J costs n or 2n evaluations.
         state, x = ctx.state, ctx.x
         pinv = _pinv(ctx)
@@ -113,7 +118,8 @@ class _FiniteDifference(torch.autograd.Function):
         return (up - _FiniteDifference.apply(state, x_lo)) / (2 * h)
 
     @staticmethod
-    def backward(ctx, v):
+    def backward(ctx, *grad_outputs):
+        (v,) = grad_outputs
         # Reverse mode needs J^T v: one directional difference per coordinate (n or 2n evaluations),
         # each contracted with v, so J is never stored. With a manifold the coordinates are tangent
         # ones, giving g = P^T J_amb^T v; the ambient gradient handed back is pinv(P)^T g, which the

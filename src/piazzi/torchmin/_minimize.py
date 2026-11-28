@@ -144,10 +144,11 @@ def minimize(
     def on_iteration(xflat):
         xflat = xflat.detach().reshape(-1)
         found = lookup(xflat)
-        loss, aux = (
-            found if found is not None else (torch.full((), torch.nan, dtype=like.dtype, device=like.device), None)
-        )
-        state.setdefault("start", lookup(like)[0] if lookup(like) else loss)
+        nan = torch.full((), torch.nan, dtype=like.dtype, device=like.device)
+        loss, aux = found if found is not None else (nan, None)
+        if "start" not in state:
+            at_x0 = lookup(like)
+            state["start"] = at_x0[0] if at_x0 else loss
         info = IterationInfo(
             state["it"],
             xflat.clone().reshape(shape),
@@ -161,6 +162,7 @@ def minimize(
         )
         state["it"] += 1
         state["x"] = xflat.clone()
+        assert callback is not None  # on_iteration is only passed to torchmin when there is a callback
         stop = bool(callback(info))
         if stop:
             state["stopped"] = (state["x"], loss, aux)

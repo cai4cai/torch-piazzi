@@ -201,7 +201,7 @@ def test_least_squares_callback_gets_iteration_info_and_can_stop(outlier_data):
     import scipy.optimize
 
     if "callback" not in inspect.signature(scipy.optimize.least_squares).parameters:
-        with pytest.raises(TypeError, match="SciPy 1.16"):
+        with pytest.raises(TypeError, match=r"SciPy 1\.16"):
             pzs.least_squares(residuals(*outlier_data), torch.tensor([1.0, 0.5]), callback=print)
         return
     seen = []

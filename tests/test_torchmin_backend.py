@@ -1,5 +1,6 @@
 """Tests of ``piazzi.torchmin``: pytorch-minimize behind piazzi's calling convention."""
 
+import itertools
 import subprocess
 import sys
 
@@ -107,7 +108,7 @@ def test_rejected_trust_region_step_is_not_accepted():
     pzt.minimize(rosen, torch.tensor([-1.2, 1.0], dtype=F64), "trust-exact", callback=infos.append)
     rejected = [i for i in infos if not i.accepted]
     assert rejected  # this start has rejected steps
-    for a, b in zip(infos, infos[1:], strict=False):
+    for a, b in itertools.pairwise(infos):
         if not b.accepted:
             assert torch.equal(a.x, b.x)
 
@@ -186,7 +187,5 @@ def test_entropy_matches_native_value():
 @needs_torchmin
 def test_trust_krylov_upstream_failure():
     """torchmin 0.1.0's trust-krylov raises when its Lanczos process breaks down; piazzi does not hide it."""
-    try:
+    with pytest.raises(RuntimeError, match="reducible"):
         pzt.minimize(rosen, torch.tensor([-1.2, 1.0], dtype=F64), "trust-krylov")
-    except RuntimeError as e:
-        assert "reducible" in str(e)
