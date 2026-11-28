@@ -270,6 +270,9 @@ def gauss_newton(
     gc, Hc = host(g), host(H)
     lam = tau * (diagonal(Hc).max().item() if damping == "identity" else 1.0)
     nu, rejections, have_sys = 2.0, 0, True
+    # Facts about the first Levenberg-Marquardt trial from the current point (set when
+    # rejections == 0, which is the case on the first iteration).
+    first_unmoved, gn_checked, gn_pred = False, None, None
     # Levenberg-Marquardt state carried across rejected trials. It is set whenever rejections == 0,
     # which holds at the first iteration and after every accepted step, before it is read.
     pred_first, first_unmoved, gn_checked = math.inf, False, None
@@ -361,6 +364,7 @@ def gauss_newton(
             lam *= max(1.0 / 3.0, 1.0 - (2.0 * rho - 1.0) ** 3)
             nu, rejections = 2.0, 0
             step = d.abs().max().item()
+            converged = False
             if step < step_tol:
                 # The damped step is short, which may only mean that lam is large: the undamped
                 # Gauss-Newton step from the same point (one extra solve, no evaluation) is what
@@ -370,7 +374,7 @@ def gauss_newton(
             x, f, aux = x_new, f_new, aux_new
             gc, Hc = host(g_new), host(H_new)
             stop = notify(it, f_start, True)
-            if step < step_tol and converged:
+            if converged:
                 return result(it + 1, True, "step below step_tol")
             if stop:
                 return result(it + 1, False, "stopped by callback")
