@@ -272,9 +272,10 @@ def registration(seed, dtype):
 
 
 # Seeds 0-7, plus those where L-BFGS once ended on a steepest-descent failure after a
-# steepest-descent step had succeeded on noise (58, 63, 113, 126, 189), or one step short of
-# the resolution of x at 32 ulps (185).
-@pytest.mark.parametrize("seed", [*range(8), 58, 63, 113, 126, 185, 189])
+# steepest-descent step had succeeded on noise (58, 63, 113, 126, 189), one step short of the
+# resolution of x at 32 ulps (185), or on a double failure when backtracked steps at the noise
+# floor no longer counted as converged (111, 134, 148, 170; #29).
+@pytest.mark.parametrize("seed", [*range(8), 58, 63, 111, 113, 126, 134, 148, 170, 185, 189])
 @pytest.mark.parametrize("solver", ["lm", "gn", "lbfgs"])
 def test_float32_registration_converges_near_a_zero_residual(solver, seed):
     """Near a zero residual the loss's rounding noise is absolute: the relative noise test cannot
@@ -371,3 +372,98 @@ def test_lbfgs_stall_verdict_does_not_survive_real_progress(monkeypatch):
     # real progress; its pair is dropped. 14-24: the next steepest-descent search fails.
     res = piazzi.lbfgs_armijo(scripted(values, gradients), torch.zeros(2, dtype=torch.float64))
     assert res.message == "line search failed" and not res.converged, res.message
+
+
+# --- Issue #29: a step shortened by damping or backtracking is not convergence -------------
+
+
+def rosenbrock_residuals(x):
+    return torch.cat([10 * (x[1:] - x[:-1] ** 2), 1 - x[:-1]])
+
+
+def test_heavy_lm_damping_does_not_stop_the_run_at_x0():
+    """With tau = 1e6 the first steps are ~1e-7: short, but only because of the damping."""
+    x0 = torch.tensor([-1.2, 1.0], dtype=torch.float64)
+    res = piazzi.least_squares(rosenbrock_residuals, x0, tau=1e6)
+    assert res.converged, res.message
+    assert torch.allclose(res.x, torch.ones(2, dtype=torch.float64), atol=1e-6), res.x
+
+
+def test_lm_step_that_cannot_move_x_is_not_convergence():
+    """With tau = 1e20 the trial step rounds away entirely: x + d == x, which used to be accepted
+    as a step below step_tol (or a decrease below rounding noise) at x0."""
+    x0 = torch.tensor([-1.2, 1.0], dtype=torch.float64)
+    res = piazzi.least_squares(rosenbrock_residuals, x0, tau=1e20)
+    assert not res.converged and torch.equal(res.x, x0), res.message
+
+
+def test_gauss_newton_backtracking_to_no_step_is_not_convergence():
+    """Backtracking until the step no longer changes x used to accept that step as converged."""
+    x0 = torch.tensor([1.0, 1.0], dtype=torch.float64)
+    system = pinned_quadratic(x0, torch.tensor([2.0, 2.0], dtype=torch.float64), penalty=1.0)
+    res = piazzi.gauss_newton(system, x0, method="gn", max_backtracks=80)
+    assert not res.converged and res.message == "line search failed", res.message
+
+
+def test_lbfgs_backtracked_step_below_step_tol_is_not_convergence():
+    """A step from memory of length 1 accepted after backtracking to t ~ 2e-6, with a real
+    decrease: the accepted step is below step_tol, the distance to the minimiser is not."""
+    values = [10.0, 5.0] + [6.0] * 6 + [4.0] + [4.5] * 30
+    gradients = [[1.0, 0.0]] + [[0.5, 0.0]] * 38
+    # 0: x0. 1: a steepest step, accepted (a curvature pair). 2-7: the step from memory (length 1)
+    # and five backtracks fail. 8: t ~ 1.7e-6 decreases the loss by 1: accepted. Then every
+    # trial fails, so the run must end on a failed line search, not on step_tol.
+    res = piazzi.lbfgs_armijo(scripted(values, gradients), torch.zeros(2, dtype=torch.float64))
+    assert not res.converged and res.message != "step below step_tol", res.message
+
+
+def test_heavy_lm_damping_with_no_gauss_newton_descent_step_is_not_convergence():
+    """With an indefinite curvature the Gauss-Newton step may not descend: then there is no
+    estimate of the distance to the minimiser, and a tiny damped step is no convergence."""
+    minimum = torch.tensor([1.0, -1.0], dtype=torch.float64)
+    H = torch.tensor([[1.0, 2.0], [2.0, 1.0]], dtype=torch.float64)  # eigenvalues 3 and -1
+
+    def system(x):  # loss 0.5 |x - minimum|^2; the gradient lies along H's negative eigenvector
+        r = x - minimum
+        return 0.5 * (r * r).sum(), r, H
+
+    x0 = torch.zeros(2, dtype=torch.float64)
+    res = piazzi.gauss_newton(system, x0, method="lm", tau=1e6)
+    assert not (res.converged and torch.allclose(res.x, x0, atol=1e-3)), (res.message, res.x)
+
+
+def test_lbfgs_full_step_far_beyond_float_noise_is_not_convergence():
+    """Near x ~ 1000 in float32, a full step of 0.3 (~2500 ulps) is real distance, although it
+    is within sqrt(eps) of x; backtracked to below step_tol, it must not count as converged."""
+    values = [10.0, 5.0] + [6.0] * 5 + [4.0] + [4.5] * 30
+    gradients = [[1.0, 0.0]] + [[0.3 / 1.3, 0.0]] * 37
+    # 0: x0. 1: a steepest step, accepted; the curvature pair makes the next step from memory
+    # 0.3 long. 2-6: it fails at t = 1, 0.1, ..., 1e-4. 7: t = 1e-5 (a step of 3e-6) decreases
+    # the loss by 1: accepted. Then every trial fails.
+    res = piazzi.lbfgs_armijo(scripted(values, gradients), torch.tensor([1000.0, 0.0]))
+    assert not res.converged and res.message != "step below step_tol", res.message
+
+
+def test_gauss_newton_flat_backtracked_trial_ends_the_line_search():
+    """A loss that is flat (to rounding) for tiny steps and much higher for larger ones: the line
+    search used to accept a flat backtracked trial, then repeat the same search until max_iter."""
+    x0 = torch.tensor([1.0, 1.0], dtype=torch.float64)
+    minimum = torch.tensor([2.0, 2.0], dtype=torch.float64)
+
+    def system(x):
+        r = x - minimum
+        smooth = 0.5 * (r * r).sum()
+        loss = torch.round(smooth * 1e3) / 1e3 + (1e3 if (x - x0).abs().max() > 1e-6 else 0.0)
+        return loss, r, torch.eye(2, dtype=torch.float64)
+
+    res = piazzi.gauss_newton(system, x0, method="gn", max_backtracks=30)
+    assert not res.converged and res.message == "line search failed" and res.n_iter == 1, res
+
+
+def test_large_gn_ridge_step_is_no_distance_estimate():
+    """With gn_ridge = 1e12 the Gauss-Newton step is ~1e-11 long: that says nothing about the
+    distance to the minimiser, so neither step_tol nor the resolution of x may count it as
+    convergence (the run creeps along until max_iter instead)."""
+    x0 = torch.tensor([-1.2, 1.0], dtype=torch.float64)
+    res = piazzi.least_squares(rosenbrock_residuals, x0, method="gn", gn_ridge=1e12, max_iter=20)
+    assert not res.converged, res.message
