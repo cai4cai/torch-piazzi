@@ -9,21 +9,21 @@ from typing import Any
 import torch
 
 from ._common import Callback, OptimizeResult
-from ._lbfgs import lbfgs_armijo
+from ._lbfgs import lbfgs
 from ._manifolds import Manifold
 from ._progress import with_progress
 from ._torch_optim import torch_optimizer
 
 __all__ = ["MINIMIZE_METHODS", "minimize"]
 
-#: Scalar minimisers available to :func:`piazzi.minimize` by name: ``"lbfgs_armijo"``, and
+#: Scalar minimisers available to :func:`piazzi.minimize` by name: ``"lbfgs"``, and
 #: ``"torchmin-<method>"`` once :mod:`piazzi.torchmin` is imported (``piazzi.minimize`` does so
 #: when it meets such a name). To add one, register a callable
 #: ``method(fun, x0, *, has_aux, callback, **options)`` under a lower-case name.
 #: :func:`piazzi.minimize` passes ``manifold=`` only when one is given, so a method that
 #: doesn't support manifolds need not accept it.
 MINIMIZE_METHODS: dict[str, Callable[..., OptimizeResult]] = {
-    "lbfgs_armijo": lbfgs_armijo,
+    "lbfgs": lbfgs,
 }
 
 # Optional backends register their methods, under a prefix, when their module is imported;
@@ -34,7 +34,7 @@ _BACKEND_MODULES = {"torchmin-": "piazzi.torchmin"}
 def minimize(
     fun: Callable,
     x0: torch.Tensor,
-    method: str | type[torch.optim.Optimizer] = "lbfgs_armijo",
+    method: str | type[torch.optim.Optimizer] = "lbfgs",
     *,
     has_aux: bool = False,
     manifold: Manifold | None = None,
@@ -67,17 +67,17 @@ def minimize(
             the shape of ``x0``.
         x0 (Tensor): starting point, of any shape, or a point on ``manifold``.
         method (str or type, optional): a name from :data:`piazzi.MINIMIZE_METHODS` (case
-            insensitive; ``"lbfgs_armijo"``, that is :func:`piazzi.lbfgs_armijo`, or
+            insensitive; ``"lbfgs"``, that is :func:`piazzi.lbfgs`, or
             ``"torchmin-bfgs"``, ``"torchmin-trust-exact"``, ... for the methods of
             :func:`piazzi.torchmin.minimize`, which needs pytorch-minimize), or a
-            :class:`torch.optim.Optimizer` subclass (the class, not an instance). Default: ``"lbfgs_armijo"``
+            :class:`torch.optim.Optimizer` subclass (the class, not an instance). Default: ``"lbfgs"``
 
     Keyword Args:
         has_aux (bool, optional): whether ``fun`` also returns an auxiliary output (any tree
             of tensors), returned detached in ``result.aux`` and ``info.aux``.
             Default: ``False``
         manifold (Manifold, optional): keeps ``x`` on a manifold such as
-            :class:`piazzi.SE3`; see :func:`piazzi.lbfgs_armijo`. Not supported with
+            :class:`piazzi.SE3`; see :func:`piazzi.lbfgs`. Not supported with
             :class:`torch.optim.Optimizer` methods. Default: ``None``
         callback (Callable, optional): called with an :class:`piazzi.IterationInfo` after
             every iteration; returning ``True`` stops the run. Default: ``None``
@@ -88,10 +88,10 @@ def minimize(
             ``{"max_iter": 500, "step_tol": 1e-8}``. Default: ``None``
 
     Returns:
-        OptimizeResult: the method's result; see :func:`piazzi.lbfgs_armijo`.
+        OptimizeResult: the method's result; see :func:`piazzi.lbfgs`.
 
     See Also:
-        - :func:`piazzi.lbfgs_armijo`: the default method, which documents its ``options``.
+        - :func:`piazzi.lbfgs`: the default method, which documents its ``options``.
         - :func:`piazzi.scipy.minimize`: the same problem with SciPy's methods.
 
     Example::
@@ -108,7 +108,7 @@ def minimize(
     callback = with_progress(callback, verbose)  # here, so that every method prints the same way
     if isinstance(method, type) and issubclass(method, torch.optim.Optimizer):
         if manifold is not None:
-            raise ValueError("manifold= is not supported with torch.optim optimisers; use method='lbfgs_armijo'")
+            raise ValueError("manifold= is not supported with torch.optim optimisers; use method='lbfgs'")
         return torch_optimizer(fun, x0, method, has_aux=has_aux, callback=callback, **(options or {}))
     if not isinstance(method, str):
         raise TypeError(

@@ -69,7 +69,7 @@ PyPose's Gauss-Newton and Levenberg-Marquardt are the same algorithms as {func}`
 
 - Nothing leaves PyTorch: `fun` and the solver run on the device and in the dtype of `x0`, with gradients, Hessians and Hessian-vector products from autograd (the Newton-type and trust-region methods need a twice-differentiable objective).
 - `has_aux`, and `callback(info)` with the value and `aux` at each iterate, work as for the native solvers. torchmin's own callback only receives `x`; the wrapper looks the value up among the evaluations it has made, so the callback costs no extra evaluation.
-- `manifold=` raises {class}`ValueError`: torchmin has no retraction. Use {func}`piazzi.lbfgs_armijo` for manifolds.
+- `manifold=` raises {class}`ValueError`: torchmin has no retraction. Use {func}`piazzi.lbfgs` for manifolds.
 - Every evaluation torchmin makes is a value-and-gradient one, so `n_fun_grad` is the number of calls to `fun`, and `n_fun` and `n_system` are zero: Hessian-vector products are backward passes through the graph kept from an evaluation, which the wrapper cannot see, so they are not counted.
 - `result.converged` is torchmin's `success` and a finite value, plus a check of the gradient at the result (at most `options["gtol"]`, or torchmin's default for the method, or 1e-3 of the gradient at `x0`). BFGS, L-BFGS, Newton-CG and Newton-exact also report success when a step or a decrease falls below `xtol`; a stall at a large gradient is reported as not converged, and `message` says so. They stop before moving to the last trial point, so `x` can then differ from the last `info.x` the callback saw.
 

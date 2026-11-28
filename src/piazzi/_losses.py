@@ -96,7 +96,7 @@ def robust_cost(r: torch.Tensor, loss: Loss = "linear", f_scale: float = 1.0) ->
 
     This is the cost that :func:`piazzi.least_squares` minimises, written so that autograd
     can differentiate it. Use it with :func:`piazzi.minimize` or
-    :func:`piazzi.lbfgs_armijo` to minimise the same cost without a Jacobian.
+    :func:`piazzi.lbfgs` to minimise the same cost without a Jacobian.
 
     Args:
         r (Tensor): residuals, of any shape.

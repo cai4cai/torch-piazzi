@@ -72,7 +72,7 @@ def test_header_on_each_run():
 
 
 def test_prints_to_stdout_by_default(capsys):
-    piazzi.lbfgs_armijo(cost, torch.tensor([1.0, 1.0], dtype=D), max_iter=3, callback=piazzi.print_progress())
+    piazzi.lbfgs(cost, torch.tensor([1.0, 1.0], dtype=D), max_iter=3, callback=piazzi.print_progress())
     header, body = rows(capsys.readouterr().out)
     assert header.split()[0] == "iter" and len(body) == 3
     assert all(int(r[4]) > 0 for r in body)  # L-BFGS counts value-and-gradient evaluations
@@ -131,7 +131,7 @@ def scipy_minimize(f, x0, **kw):
 SOLVERS = {
     "least_squares": lambda **kw: piazzi.least_squares(residuals, X0, **kw),
     "gauss_newton": lambda **kw: piazzi.gauss_newton(system, X0, **kw),
-    "lbfgs_armijo": lambda **kw: piazzi.lbfgs_armijo(cost, X0, **kw),
+    "lbfgs": lambda **kw: piazzi.lbfgs(cost, X0, **kw),
     "minimize": lambda **kw: piazzi.minimize(cost, X0, **kw),
     "minimize_torch_optim": lambda **kw: piazzi.minimize(
         cost, X0, method=torch.optim.Adam, options={"lr": 0.1, "max_iter": 5}, **kw

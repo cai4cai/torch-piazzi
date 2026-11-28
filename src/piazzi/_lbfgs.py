@@ -1,9 +1,10 @@
-"""L-BFGS with a cheap Armijo backtracking line search."""
+"""L-BFGS with Armijo backtracking or strong Wolfe line search."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from typing import Literal
 
 import torch
 
@@ -16,13 +17,13 @@ from ._common import (
     detach_tree,
     retract,
     split_aux,
-    unmoved,
     within,
 )
+from ._line_search import armijo_search, wolfe_search
 from ._manifolds import Manifold
 from ._progress import with_progress
 
-__all__ = ["lbfgs_armijo"]
+__all__ = ["lbfgs"]
 
 # How far (in units in the last place of each entry's scale) the full step of a backtracked
 # L-BFGS step may move x for that step to count towards step_tol: 16 times the resolution of x,
@@ -31,7 +32,7 @@ __all__ = ["lbfgs_armijo"]
 NEAR_ULPS = 16 * RESOLUTION_ULPS
 
 
-def lbfgs_armijo(
+def lbfgs(
     fun: Callable,
     x0: torch.Tensor,
     *,
@@ -41,40 +42,50 @@ def lbfgs_armijo(
     max_iter: int = 100,
     lr: float = 1.0,
     history_size: int = 10,
+    line_search: Literal["armijo", "strong_wolfe"] = "armijo",
     c1: float = 1e-4,
+    c2: float = 0.9,
     max_backtracks: int = 10,
     max_step: float = 1.0,
     step_tol: float = 1e-5,
     callback: Callback | None = None,
     verbose: bool | int = False,
 ) -> OptimizeResult:
-    """Minimise a scalar function with L-BFGS and an Armijo backtracking line search.
+    """Minimise a scalar function with L-BFGS and a line search.
 
-    Built for expensive, deterministic objectives, where every evaluation counts. Each
-    iteration first tries the full step: ``lr`` times the L-BFGS direction (scaled by
+    Built for expensive, deterministic objectives, where every evaluation counts.
+
+    **Armijo backtracking** (``line_search="armijo"``, the default): each iteration
+    tries the full step (``lr`` times the L-BFGS direction, scaled by
     ``min(1, 1 / ||g||_1)`` while there is no curvature history, at the start or after a
-    reset), capped so that no coordinate moves more than ``max_step``. If the sufficient-decrease condition fails,
-    the step is shrunk by quadratic interpolation. Each trial point is evaluated with its
-    autograd graph kept, and the backward pass runs only once a point is accepted: a
-    typical iteration costs one value-and-gradient evaluation, a rejected trial costs a
-    forward pass only, and no point is evaluated twice. Only the latest trial's graph is
-    held at any time.
+    reset), capped so that no coordinate moves more than ``max_step``. If the
+    sufficient-decrease condition (Armijo, parameter ``c1``) fails, the step is shrunk by
+    quadratic interpolation up to ``max_backtracks`` times. Each trial point is evaluated
+    with its autograd graph kept, and the backward pass runs only once a point is accepted:
+    a typical iteration costs one value-and-gradient evaluation, a rejected trial costs a
+    forward pass only, and no point is evaluated twice.
 
-    Curvature pairs with ``s.y <= 0`` are skipped (Armijo does not guarantee positive
-    curvature). If no decrease is found the memory is reset and the iterate does not move;
-    the run then retries once with steepest descent. It stops after two failures in a row,
-    after one failure of a steepest-descent step (a retry would repeat it exactly), or once
-    a step is below ``step_tol`` (max-norm). The stop counts as convergence when the last
-    failed search from the L-BFGS memory showed a minimiser to working precision: its step,
-    which estimates the distance to the minimiser, left ``x`` unmoved (every entry within 64
-    units in the last place of its scale, ``|x|`` or the manifold's
-    :meth:`~piazzi.Manifold.entry_scale`, at a finite value), or the loss did not measurably
-    go up (by more than ``8 * eps * |loss|`` in its dtype) while that step was below
-    ``step_tol`` or predicted a decrease below that rounding noise. Near the optimum of a
-    float32 objective, the line search otherwise keeps failing on noise. That verdict
-    survives steepest-descent steps that succeed on noise, as long as ``x`` stays within
-    ``sqrt(eps)`` (per entry, at its scale) of where it was given, the precision to which a
-    minimiser is determined; an accepted step from memory, or moving further, clears it. A
+    **Strong Wolfe** (``line_search="strong_wolfe"``): a bracketing phase followed by a
+    zoom phase with cubic interpolation, following Nocedal and Wright Algorithm 3.5/3.6
+    (ported from ``torch.optim.LBFGS``). Every trial point requires a gradient evaluation
+    (the curvature condition needs it), so rejected trials cost one ``n_fun_grad`` count
+    instead of one ``n_fun`` count. ``value_fun`` is ignored when
+    ``line_search="strong_wolfe"``. A step that satisfies the curvature condition (parameter
+    ``c2``) has ``sᵀy > 0``, so its curvature pair is kept; if the search ends on the Armijo
+    condition alone (its trial budget is spent, or the step reached ``max_step``), the pair is
+    kept only if ``sᵀy > 0``, as with Armijo. On a failed search the memory is still
+    reset and the solver retries with steepest descent, exactly as with Armijo.
+
+    **Convergence** (both line searches): curvature pairs with ``s·y ≤ 0`` are skipped
+    (the strong Wolfe curvature condition rules them out when it holds). If no sufficient
+    decrease is found, the memory is reset and the iterate does not move; the run retries
+    once with steepest descent. It stops after two failures in a row, after one failure of a
+    steepest-descent step, or once a step is below ``step_tol`` (max-norm). The stop counts
+    as convergence when the last failed search from the L-BFGS memory showed a minimiser to
+    working precision: its step left ``x`` unmoved (every entry within 64 units in the last
+    place of its scale, ``|x|`` or the manifold's :meth:`~piazzi.Manifold.entry_scale`, at a
+    finite value), or the loss did not measurably go up (by more than ``8 * eps * |loss|``)
+    while that step was below ``step_tol`` or predicted a decrease below rounding noise. A
     trial point with a non-finite value never passes the line search, and a non-finite value
     at ``x0`` stops the run at once.
 
@@ -95,20 +106,32 @@ def lbfgs_armijo(
             coordinates without vector transport (as in Ceres Solver's line-search
             solver). ``max_step`` and ``step_tol`` apply to the tangent step.
             Default: ``None``
-        value_fun (Callable, optional): a cheaper ``value_fun(x) -> loss`` for the
-            backtracking evaluations of the line search, run under
-            :class:`torch.no_grad`. The gradient at an accepted backtracked point then needs
-            one more call to ``fun``. With the default, the backtracking evaluates ``fun``
-            itself and records its graph for the deferred backward pass; if ``fun`` is much
-            cheaper without a graph, pass ``value_fun=fun`` to backtrack under
-            :class:`torch.no_grad` instead. Default: ``None``
+        value_fun (Callable, optional): a cheaper ``value_fun(x) -> loss`` for the Armijo
+            backtracking evaluations, run under :class:`torch.no_grad`. The gradient at an
+            accepted backtracked point then needs one more call to ``fun``. With the default,
+            the backtracking evaluates ``fun`` itself and records its graph for the deferred
+            backward pass; if ``fun`` is much cheaper without a graph, pass
+            ``value_fun=fun`` to backtrack under :class:`torch.no_grad` instead. Ignored
+            when ``line_search="strong_wolfe"``, which always needs the gradient.
+            Default: ``None``
         max_iter (int, optional): maximum number of iterations. Default: ``100``
         lr (float, optional): initial step length along the L-BFGS direction.
             Default: ``1.0``
         history_size (int, optional): number of curvature pairs kept. Default: ``10``
-        c1 (float, optional): Armijo sufficient-decrease constant. Default: ``1e-4``
-        max_backtracks (int, optional): maximum number of step reductions in one line
-            search. Default: ``10``
+        line_search (str, optional): ``"armijo"`` for cheap Armijo backtracking (one
+            forward pass per rejected trial) or ``"strong_wolfe"`` for the bracketing and
+            zoom method with cubic interpolation (one value-and-gradient evaluation per
+            trial). Default: ``"armijo"``
+        c1 (float, optional): sufficient-decrease (Armijo) constant, used by both line
+            searches. Default: ``1e-4``
+        c2 (float, optional): curvature constant for the strong Wolfe condition; must
+            satisfy ``c1 < c2 < 1`` (checked with ``line_search="strong_wolfe"``). Ignored
+            when ``line_search="armijo"``.
+            Default: ``0.9``
+        max_backtracks (int, optional): maximum number of trial points in one line search
+            after the first one (step reductions for Armijo, bracketing and zoom trials for
+            strong Wolfe), so a search makes at most ``max_backtracks + 1`` evaluations.
+            Default: ``10``
         max_step (float, optional): largest change of any coordinate in one step (in the
             units of ``x``, or of the tangent vector). Default: ``1.0``
         step_tol (float, optional): stop, as converged, once an accepted step from the
@@ -128,20 +151,30 @@ def lbfgs_armijo(
     Returns:
         OptimizeResult: the solution ``x`` (shaped like ``x0``), the final loss ``fun`` and
         ``aux``, ``n_iter``, the counts ``n_fun_grad`` (value and gradient) and ``n_fun``
-        (value only), and ``converged`` and ``message``.
+        (value only, Armijo backtracking only), and ``converged`` and ``message``.
 
     See Also:
         - :func:`piazzi.minimize`: the high-level interface, which runs this method by default
-          (``method="lbfgs_armijo"``) and passes its ``options`` here.
+          and passes its ``options`` here.
 
     Example::
 
         >>> def rosenbrock(x):
         ...     return (100 * (x[1:] - x[:-1] ** 2) ** 2 + (1 - x[:-1]) ** 2).sum()
-        >>> res = piazzi.lbfgs_armijo(rosenbrock, torch.tensor([-1.2, 1.0], dtype=torch.float64))
+        >>> res = piazzi.lbfgs(rosenbrock, torch.tensor([-1.2, 1.0], dtype=torch.float64))
         >>> res.x, res.converged
         (tensor([1.0000, 1.0000], dtype=torch.float64), True)
+        >>> res_sw = piazzi.lbfgs(
+        ...     rosenbrock, torch.tensor([-1.2, 1.0], dtype=torch.float64),
+        ...     line_search="strong_wolfe",
+        ... )
+        >>> res_sw.x, res_sw.converged
+        (tensor([1.0000, 1.0000], dtype=torch.float64), True)
     """
+    if line_search not in ("armijo", "strong_wolfe"):
+        raise ValueError(f"line_search must be 'armijo' or 'strong_wolfe', got {line_search!r}")
+    if line_search == "strong_wolfe" and not 0 < c1 < c2 < 1:
+        raise ValueError(f"strong Wolfe needs 0 < c1 < c2 < 1, got c1={c1!r}, c2={c2!r}")
     callback = with_progress(callback, verbose)
     x, shape = check_x0(x0)
     counts = {"fg": 0, "f": 0}
@@ -189,11 +222,7 @@ def lbfgs_armijo(
         counts["f"] += 1
         return loss.detach()
 
-    def armijo_ok(fn, bound):
-        # A non-finite trial value (NaN, or -inf, which would pass `<=`) is never accepted.
-        return math.isfinite(fn) and fn <= bound
-
-    def result(n_iter, converged, message):
+    def mk_result(n_iter, converged, message):
         return OptimizeResult(
             x=x.reshape(shape),
             fun=f,
@@ -207,9 +236,9 @@ def lbfgs_armijo(
 
     f, aux, g = eval_full(x)
     if not torch.isfinite(f):
-        return result(0, False, "objective is not finite at x0")
+        return mk_result(0, False, "objective is not finite at x0")
     if g.numel() == 0:  # a manifold with no degrees of freedom (e.g. Subset with every entry fixed)
-        return result(0, True, "no free parameters")
+        return mk_result(0, True, "no free parameters")
     S: list[torch.Tensor] = []
     Y: list[torch.Tensor] = []
     fails, stalled, x_stalled = 0, None, None
@@ -217,7 +246,7 @@ def lbfgs_armijo(
     for it in range(max_iter):
         f_val = f.item()
         if g.abs().max().item() == 0:  # stationary: nothing to do, and no direction to search
-            return result(it, True, "gradient is zero")
+            return mk_result(it, True, "gradient is zero")
         # Two-loop recursion.
         qv = -g
         alphas = []
@@ -242,29 +271,47 @@ def lbfgs_armijo(
         t = lr if S else lr * min(1.0, 1.0 / max(g.abs().sum().item(), 1e-12))
         t = min(t, max_step / max(d.abs().max().item(), 1e-12))
         used_memory = bool(S)
-        pred, step0 = -t * gtd, t * d.abs().max().item()  # predicted decrease and size of the first trial
-        x_new = retract(manifold, x, t * d)
-        f_new, aux_new, pending = eval_trial(x_new)
-        # A step from the L-BFGS memory estimates the distance to the minimiser: if it leaves x
-        # unmoved (and its value is finite), x is a minimiser to working precision.
-        first_unmoved = used_memory and math.isfinite(f_new.item()) and unmoved(manifold, x, x_new)
-        x_first = x_new
-        n_bt = 0
-        while not armijo_ok(f_new.item(), f_val + c1 * t * gtd) and n_bt < max_backtracks:
-            reject(pending)
-            pending = None  # free the rejected trial's graph before the next forward pass
-            denom = 2.0 * (f_new.item() - f_val - gtd * t)
-            t_q = -gtd * t * t / denom if denom > 0 else 0.5 * t
-            t = min(max(t_q, 0.1 * t), 0.5 * t)
-            x_new = retract(manifold, x, t * d)
-            if value_fun is None:
-                f_new, aux_new, pending = eval_trial(x_new)
-            else:
-                f_new, pending = eval_value(x_new), None
-            n_bt += 1
-        if not armijo_ok(f_new.item(), f_val + c1 * t * gtd):  # no sufficient decrease found
-            reject(pending)
-            pending = None
+        pred, step0 = -t * gtd, t * d.abs().max().item()
+
+        # ---- line search ----
+        if line_search == "armijo":
+            x_new, f_new, aux_new, g_new, t, x_first, first_unmoved, search_ok = armijo_search(
+                x,
+                f_val,
+                d,
+                t,
+                gtd,
+                used_memory,
+                manifold,
+                c1,
+                max_backtracks,
+                eval_trial,
+                eval_value,
+                accept,
+                reject,
+                retract,
+                value_fun,
+            )
+        else:
+            x_new, f_new, aux_new, g_new, t, x_first, first_unmoved, search_ok = wolfe_search(
+                x,
+                f_val,
+                g,
+                aux,
+                d,
+                t,
+                max_step / max(d.abs().max().item(), 1e-12),
+                gtd,
+                used_memory,
+                manifold,
+                c1,
+                c2,
+                max_backtracks,
+                eval_full,
+                retract,
+            )
+
+        if not search_ok:  # no sufficient decrease found
             S.clear()
             Y.clear()
             fails += 1
@@ -288,11 +335,11 @@ def lbfgs_armijo(
                 stalled, x_stalled = verdict, x
             if fails >= 2 or not used_memory:
                 if stalled is not None:
-                    return result(it + 1, True, stalled)
+                    return mk_result(it + 1, True, stalled)
                 message = "line search failed twice in a row" if fails >= 2 else "line search failed"
-                return result(it + 1, False, message)
+                return mk_result(it + 1, False, message)
             if stop:
-                return result(it + 1, False, "stopped by callback")
+                return mk_result(it + 1, False, "stopped by callback")
             continue
         fails = 0
         # An earlier verdict holds across steepest-descent steps that succeed on noise at a noise
@@ -307,19 +354,18 @@ def lbfgs_armijo(
             and (used_memory or not within(manifold, x_stalled, x_new, torch.finfo(x.dtype).eps ** 0.5))
         ):
             stalled = None
-        if pending is None:  # accepted on a value_fun evaluation
+        if g_new is None:  # Armijo accepted on a value_fun evaluation: need a full eval for g
             f_new, aux_new, g_new = eval_full(x_new)
-        else:
-            g_new = accept(pending)
-            pending = None
         if not torch.isfinite(g_new).all():  # the value decreased, but the gradient is unusable
             f_start = f
             x, f, aux = x_new, f_new, aux_new
             if callback is not None:
                 callback(IterationInfo(it, x.reshape(shape), f, f_start, aux, True, counts["fg"], counts["f"]))
-            return result(it + 1, False, "gradient is not finite")
+            return mk_result(it + 1, False, "gradient is not finite")
         s_vec, y_vec = t * d, g_new - g  # tangent step (equals x_new - x without a manifold)
-        # Keep the pair only with positive curvature, relative to the scale of s and y.
+        # Keep only pairs with positive curvature, relative to the scale of s and y. Armijo does
+        # not guarantee it, nor does a strong Wolfe search that ended on Armijo alone (budget
+        # spent, or step capped by max_step).
         sy = torch.dot(s_vec, y_vec).item()
         if sy > eps * (torch.linalg.vector_norm(s_vec) * torch.linalg.vector_norm(y_vec)).item():
             S.append(s_vec)
@@ -344,7 +390,7 @@ def lbfgs_armijo(
         no_progress = f_start.item() - f.item() <= 8 * torch.finfo(f.dtype).eps * abs(f_start.item())
         full_near = within(manifold, x_prev, x_first, NEAR_ULPS * torch.finfo(x.dtype).eps)
         if used_memory and step < step_tol and (step0 < step_tol or full_near or no_progress):
-            return result(it + 1, True, "step below step_tol")
+            return mk_result(it + 1, True, "step below step_tol")
         if stop:
-            return result(it + 1, False, "stopped by callback")
-    return result(max_iter, False, "max_iter reached")
+            return mk_result(it + 1, False, "stopped by callback")
+    return mk_result(max_iter, False, "max_iter reached")

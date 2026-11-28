@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Breaking:** `lbfgs_armijo` is now `lbfgs` (and `method="lbfgs"` in `minimize`), with a `line_search="armijo" | "strong_wolfe"` argument. The default is unchanged. Strong Wolfe (Nocedal and Wright, Algorithms 3.5 and 3.6, with cubic interpolation, as in `torch.optim.LBFGS`) guarantees positive curvature pairs but evaluates the gradient at every trial point, so a rejected trial counts in `n_fun_grad`, not `n_fun`; `value_fun` is ignored. The line searches live in the private `_line_search` module so that other solvers can share them.
 - Strip local `+...` version identifiers during `workflow_dispatch` builds so untagged branches can be dry-run on TestPyPI.
 - Update the README and documentation for PyPI installation, and add a maintainer release guide.
 

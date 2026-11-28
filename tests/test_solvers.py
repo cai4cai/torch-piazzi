@@ -19,14 +19,14 @@ def exp_data():
     return t, y
 
 
-def test_lbfgs_armijo_rosenbrock():
+def test_lbfgs_rosenbrock():
     x0 = torch.tensor([-1.2, 1.0], dtype=torch.float64)
-    res = piazzi.lbfgs_armijo(rosenbrock, x0, max_iter=500, step_tol=1e-10)
+    res = piazzi.lbfgs(rosenbrock, x0, max_iter=500, step_tol=1e-10)
     assert torch.allclose(res.x, torch.ones(2, dtype=torch.float64), atol=1e-4)
     assert res.n_fun_grad > 0
 
 
-def test_lbfgs_armijo_keeps_shape_aux_and_callback():
+def test_lbfgs_keeps_shape_aux_and_callback():
     target = torch.arange(6, dtype=torch.float64).reshape(2, 3)
 
     def fun(x):
@@ -34,7 +34,7 @@ def test_lbfgs_armijo_keeps_shape_aux_and_callback():
         return loss, {"half": 0.5 * loss}
 
     seen = []
-    res = piazzi.lbfgs_armijo(
+    res = piazzi.lbfgs(
         fun,
         torch.zeros(2, 3, dtype=torch.float64),
         has_aux=True,
@@ -48,7 +48,7 @@ def test_lbfgs_armijo_keeps_shape_aux_and_callback():
 
 
 def test_lbfgs_callback_stop():
-    res = piazzi.lbfgs_armijo(rosenbrock, torch.tensor([-1.2, 1.0]), max_iter=100, callback=lambda info: True)
+    res = piazzi.lbfgs(rosenbrock, torch.tensor([-1.2, 1.0]), max_iter=100, callback=lambda info: True)
     assert res.n_iter == 1 and res.message == "stopped by callback"
 
 
@@ -111,48 +111,48 @@ def rosen_nd(x):
 
 
 @pytest.mark.parametrize("scale", [1.0, 1e-3, 1e-6, 1e-9])
-def test_lbfgs_armijo_is_scale_invariant(scale):
+def test_lbfgs_is_scale_invariant(scale):
     """Absolute thresholds made tiny objectives stall (1e-6) or stop at x0 as converged (1e-9)."""
     x0 = torch.tensor([-1.2, 1.0], dtype=torch.float64)
-    res = piazzi.lbfgs_armijo(lambda x: scale * rosen_nd(x), x0, max_iter=500, step_tol=1e-9)
+    res = piazzi.lbfgs(lambda x: scale * rosen_nd(x), x0, max_iter=500, step_tol=1e-9)
     assert res.converged, res.message
     assert torch.allclose(res.x, torch.ones(2, dtype=torch.float64), atol=1e-5)
 
 
-def test_lbfgs_armijo_tiny_gradient_is_not_converged_at_x0():
+def test_lbfgs_tiny_gradient_is_not_converged_at_x0():
     target = torch.tensor([3.0, -2.0], dtype=torch.float64)
-    res = piazzi.lbfgs_armijo(lambda x: 1e-7 * ((x - target) ** 2).sum(), torch.zeros(2, dtype=torch.float64))
+    res = piazzi.lbfgs(lambda x: 1e-7 * ((x - target) ** 2).sum(), torch.zeros(2, dtype=torch.float64))
     assert res.converged and torch.allclose(res.x, target, atol=1e-6), (res.x, res.message)
 
 
-def test_lbfgs_armijo_stops_on_a_non_finite_gradient():
+def test_lbfgs_stops_on_a_non_finite_gradient():
     # sqrt((x - 1)^2) has a NaN gradient exactly at its minimiser, which the first step hits.
-    res = piazzi.lbfgs_armijo(lambda x: ((x - 1) ** 2).sqrt().sum(), torch.zeros(1, dtype=torch.float64))
+    res = piazzi.lbfgs(lambda x: ((x - 1) ** 2).sqrt().sum(), torch.zeros(1, dtype=torch.float64))
     assert res.message == "gradient is not finite" and res.n_fun_grad == 2 and res.n_fun == 0
     assert res.x.item() == 1.0 and res.fun.item() == 0.0
 
 
-def test_lbfgs_armijo_does_not_repeat_a_failed_steepest_descent_search():
+def test_lbfgs_does_not_repeat_a_failed_steepest_descent_search():
     points = []
 
     def wrong_gradient(x):  # value 2 |x|^2, but gradient -2 x: every search direction goes uphill
         points.append(x.detach().clone())
         return 3 * (x.detach() ** 2).sum() - (x**2).sum()
 
-    res = piazzi.lbfgs_armijo(wrong_gradient, torch.ones(2, dtype=torch.float64))
+    res = piazzi.lbfgs(wrong_gradient, torch.ones(2, dtype=torch.float64))
     assert not res.converged and res.message == "line search failed"
     assert len({tuple(p.tolist()) for p in points}) == len(points)
 
 
-def test_lbfgs_armijo_at_the_minimiser_evaluates_once():
-    res = piazzi.lbfgs_armijo(rosen_nd, torch.ones(3, dtype=torch.float64))
+def test_lbfgs_at_the_minimiser_evaluates_once():
+    res = piazzi.lbfgs(rosen_nd, torch.ones(3, dtype=torch.float64))
     assert res.converged and res.message == "gradient is zero" and res.n_fun_grad == 1
 
 
 @pytest.mark.parametrize("n", [2, 5, 10])
-def test_lbfgs_armijo_float32_reports_convergence(n):
+def test_lbfgs_float32_reports_convergence(n):
     x0 = torch.tensor([-1.2, 1.0]).repeat(n // 2) if n % 2 == 0 else torch.zeros(n)
-    res = piazzi.lbfgs_armijo(rosen_nd, x0, max_iter=1000)
+    res = piazzi.lbfgs(rosen_nd, x0, max_iter=1000)
     assert res.converged, res.message
     assert torch.allclose(res.x, torch.ones(n), atol=1e-4)
 
@@ -167,7 +167,7 @@ def test_value_fun_may_return_aux(solver, exp_data):
 
     x0 = torch.tensor([1.0, 0.5], dtype=torch.float64)
     if solver == "lbfgs":
-        res = piazzi.lbfgs_armijo(fun_aux, x0, has_aux=True, value_fun=fun_aux, lr=50.0, max_step=100.0, max_iter=500)
+        res = piazzi.lbfgs(fun_aux, x0, has_aux=True, value_fun=fun_aux, lr=50.0, max_step=100.0, max_iter=500)
     else:
         system = piazzi.least_squares_system(lambda th: (exp_residuals(th, t, y), {"r0": th[0]}), has_aux=True)
         x0 = torch.tensor([50.0, 10.0], dtype=torch.float64)  # far away: the line search backtracks
@@ -250,10 +250,10 @@ FLOAT32_ROSEN_STARTS = {
 
 
 @pytest.mark.parametrize("start", FLOAT32_ROSEN_STARTS, ids=list(FLOAT32_ROSEN_STARTS))
-def test_lbfgs_armijo_float32_converges_at_the_minimiser(start):
+def test_lbfgs_float32_converges_at_the_minimiser(start):
     x0 = torch.tensor(FLOAT32_ROSEN_STARTS[start])
-    res = piazzi.lbfgs_armijo(rosen_nd, x0, max_iter=3000)
-    ref = piazzi.lbfgs_armijo(rosen_nd, x0.double(), max_iter=3000, step_tol=1e-12)
+    res = piazzi.lbfgs(rosen_nd, x0, max_iter=3000)
+    ref = piazzi.lbfgs(rosen_nd, x0.double(), max_iter=3000, step_tol=1e-12)
     assert res.converged, res.message
     # A minimiser is determined to about sqrt(eps) of the dtype.
     assert torch.allclose(res.x.double(), ref.x, atol=3 * torch.finfo(torch.float32).eps ** 0.5)
@@ -364,13 +364,13 @@ def scripted(values, gradients):
 def test_lbfgs_stall_verdict_does_not_survive_real_progress(monkeypatch):
     """A failed step from memory may show a minimiser, and that verdict is kept for a later
     steepest-descent failure, but only near where it was given (review of #25)."""
-    monkeypatch.setattr("piazzi._lbfgs.unmoved", lambda *args: True)  # every step from memory "unmoved"
+    monkeypatch.setattr("piazzi._line_search.unmoved", lambda *args: True)  # every step from memory "unmoved"
     values = [10.0, 5.0] + [6.0] * 11 + [1.0] + [2.0] * 11
     gradients = [[1.0, 0.0], [0.5, 0.0]] + [[0.5, 0.0]] * 11 + [[0.5, 1.0]] + [[0.5, 1.0]] * 11
     # 0: x0. 1: steepest step, accepted (a curvature pair). 2-12: a step from memory and its
     # backtracks fail: verdict. 13: the steepest-descent retry moves x by 0.5 and is accepted,
     # real progress; its pair is dropped. 14-24: the next steepest-descent search fails.
-    res = piazzi.lbfgs_armijo(scripted(values, gradients), torch.zeros(2, dtype=torch.float64))
+    res = piazzi.lbfgs(scripted(values, gradients), torch.zeros(2, dtype=torch.float64))
     assert res.message == "line search failed" and not res.converged, res.message
 
 
@@ -413,7 +413,7 @@ def test_lbfgs_backtracked_step_below_step_tol_is_not_convergence():
     # 0: x0. 1: a steepest step, accepted (a curvature pair). 2-7: the step from memory (length 1)
     # and five backtracks fail. 8: t ~ 1.7e-6 decreases the loss by 1: accepted. Then every
     # trial fails, so the run must end on a failed line search, not on step_tol.
-    res = piazzi.lbfgs_armijo(scripted(values, gradients), torch.zeros(2, dtype=torch.float64))
+    res = piazzi.lbfgs(scripted(values, gradients), torch.zeros(2, dtype=torch.float64))
     assert not res.converged and res.message != "step below step_tol", res.message
 
 
@@ -440,7 +440,7 @@ def test_lbfgs_full_step_far_beyond_float_noise_is_not_convergence():
     # 0: x0. 1: a steepest step, accepted; the curvature pair makes the next step from memory
     # 0.3 long. 2-6: it fails at t = 1, 0.1, ..., 1e-4. 7: t = 1e-5 (a step of 3e-6) decreases
     # the loss by 1: accepted. Then every trial fails.
-    res = piazzi.lbfgs_armijo(scripted(values, gradients), torch.tensor([1000.0, 0.0]))
+    res = piazzi.lbfgs(scripted(values, gradients), torch.tensor([1000.0, 0.0]))
     assert not res.converged and res.message != "step below step_tol", res.message
 
 

@@ -27,13 +27,13 @@ def x0():
 # piazzi.minimize
 
 
-def test_minimize_dispatches_to_lbfgs_armijo(x0):
+def test_minimize_dispatches_to_lbfgs(x0):
     options = {"max_iter": 500, "step_tol": 1e-10}
     res = piazzi.minimize(rosenbrock, x0, options=options)
-    ref = piazzi.lbfgs_armijo(rosenbrock, x0, **options)
+    ref = piazzi.lbfgs(rosenbrock, x0, **options)
     assert torch.equal(res.x, ref.x) and res.n_fun_grad == ref.n_fun_grad
     assert torch.allclose(res.x, ONES, atol=1e-4)
-    assert torch.equal(piazzi.minimize(rosenbrock, x0, method="LBFGS_Armijo", options=options).x, ref.x)
+    assert torch.equal(piazzi.minimize(rosenbrock, x0, method="LBFGS", options=options).x, ref.x)
 
 
 def test_minimize_aux_and_callback(x0):
@@ -49,7 +49,7 @@ def test_minimize_aux_and_callback(x0):
 
 
 def test_minimize_unknown_method(x0):
-    with pytest.raises(ValueError, match="lbfgs_armijo"):
+    with pytest.raises(ValueError, match="lbfgs"):
         piazzi.minimize(rosenbrock, x0, method="BFGS")
 
 

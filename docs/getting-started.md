@@ -50,7 +50,7 @@ print(res.x, res.message)  # tensor([2.5026, 1.3005]) step below step_tol
 
 With the default `loss="linear"`, the outliers pull the fit to `[3.1053, 1.2741]`; see {doc}`guide/least-squares` for the robust losses.
 
-For a scalar objective, use {func}`piazzi.minimize` (L-BFGS with an Armijo line search by default):
+For a scalar objective, use {func}`piazzi.minimize` (L-BFGS, with an Armijo line search by default):
 
 ```python
 def rosenbrock(x):

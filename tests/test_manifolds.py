@@ -228,17 +228,18 @@ def test_least_squares_se3_robust(registration):
     assert errors["cauchy"] < 0.05 and errors["linear"] > 1.0
 
 
+@pytest.mark.parametrize("line_search", ["armijo", "strong_wolfe"])
 @pytest.mark.parametrize("retraction", ["decoupled", "exp"])
-def test_lbfgs_and_minimize_se3(registration, retraction):
+def test_lbfgs_and_minimize_se3(registration, retraction, line_search):
     residuals, T_true, centre = registration
     M = piazzi.SE3(retraction=retraction, pivot=centre)
 
     def cost(T):
         return 0.5 * (residuals(T) ** 2).sum()
 
-    opts = {"max_iter": 500, "max_step": 1e3, "step_tol": 1e-10}
+    opts = {"max_iter": 500, "max_step": 1e3, "step_tol": 1e-10, "line_search": line_search}
     for res in (
-        piazzi.lbfgs_armijo(cost, torch.eye(4, dtype=D), manifold=M, **opts),
+        piazzi.lbfgs(cost, torch.eye(4, dtype=D), manifold=M, **opts),
         piazzi.minimize(cost, torch.eye(4, dtype=D), manifold=M, options=opts),
     ):
         assert res.converged, res.message
@@ -314,7 +315,7 @@ def test_minimize_registered_method_without_manifold():
 
     def plain(fun, x0, *, has_aux, callback):
         calls.append(x0)
-        return piazzi.lbfgs_armijo(fun, x0, has_aux=has_aux, callback=callback)
+        return piazzi.lbfgs(fun, x0, has_aux=has_aux, callback=callback)
 
     piazzi.MINIMIZE_METHODS["plain_test"] = plain
     try:
@@ -346,7 +347,7 @@ def test_least_squares_with_no_free_parameters(method, damping):
 def test_lbfgs_and_minimize_with_no_free_parameters():
     x0 = torch.tensor([1.0, 2.0, 3.0], dtype=D)
     for res in (
-        piazzi.lbfgs_armijo(lambda x: (x**2).sum(), x0, manifold=FIXED),
+        piazzi.lbfgs(lambda x: (x**2).sum(), x0, manifold=FIXED),
         piazzi.minimize(lambda x: (x**2).sum(), x0, manifold=FIXED),
     ):
         assert res.converged and res.message == "no free parameters"

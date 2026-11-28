@@ -126,10 +126,16 @@ def test_sparse_normal_equations(device, dtype, placement, layout, solver):
     assert_result(res, device, dtype, EXP_SOLUTION)
 
 
+@pytest.mark.parametrize("line_search", ["armijo", "strong_wolfe"])
 @device_dtype
-def test_lbfgs_armijo(device, dtype):
+def test_lbfgs(device, dtype, line_search):
     seen = []
-    res = piazzi.minimize(rosen, tensor([-1.2, 1.0], device, dtype), callback=seen.append, options={"max_iter": 200})
+    res = piazzi.minimize(
+        rosen,
+        tensor([-1.2, 1.0], device, dtype),
+        callback=seen.append,
+        options={"max_iter": 200, "line_search": line_search},
+    )
     assert res.converged, res.message
     assert_result(res, device, dtype, torch.ones(2, dtype=torch.float64))
     assert all(info.x.device.type == device and info.fun.device.type == device for info in seen)
