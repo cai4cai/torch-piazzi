@@ -7,6 +7,7 @@ dist/
 .ruff_cache/
 .ipynb_checkpoints/
 .DS_Store
+src/piazzi/_version.py
 # Data downloaded by the notebooks
 notebooks/*.bz2
 # Copied from notebooks/ by docs/conf.py at build time

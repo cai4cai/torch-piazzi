@@ -15,7 +15,15 @@ from ._manifolds import SE3, SO3, Euclidean, Manifold, Product, Subset, se3_exp,
 from ._minimize import MINIMIZE_METHODS, minimize
 from ._progress import print_progress
 
-__version__ = "0.1.0.dev0"
+try:
+    from ._version import __version__
+except ImportError:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        __version__ = version("piazzi")
+    except PackageNotFoundError:
+        __version__ = "0.0.0.dev0+unknown"
 
 __all__ = [
     "LOSSES",

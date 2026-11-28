@@ -22,6 +22,15 @@ uv run sphinx-build -W --keep-going docs docs/_build/html
 
 piazzi requires Python 3.11 or later and PyTorch 2.15 or later; the optional extras need SciPy 1.11 (`piazzi[scipy]`; the `least_squares` callbacks need SciPy 1.16) and torchsparsegradutils 0.2.7 (`piazzi[sparse]`). CI tests the oldest and newest Pythons that PyTorch supports (3.11 and 3.15) with the latest dependencies, plus Python 3.11 with the lowest version of every direct dependency that `pyproject.toml` allows (`uv pip install --resolution lowest-direct`). Raise a floor in `pyproject.toml` when code needs a newer version, and the lowest-versions job then tests it.
 
+## Releases and versioning
+
+Versions follow PEP 440 and are derived from git tags by `hatch-vcs` (`src/piazzi/_version.py` is generated at build time and gitignored). While the API is settling, releases use `0.x` versions, starting with `0.1.0a1`.
+
+Releases are built and uploaded by `.github/workflows/publish.yml` using PyPI Trusted Publishing (OIDC):
+
+- Run the workflow manually (`workflow_dispatch`) to build and publish a test release to TestPyPI.
+- Publish a GitHub Release on a version tag (for example `v0.1.0a1`) to publish to PyPI.
+
 ## Workarounds for upstream bugs
 
 Each workaround says, in a comment next to it, which upstream bug it avoids and when to remove it, and the test suite fails if it is removed while the bug is still there. When the PyTorch floor is raised, check this list and remove the workarounds that are no longer needed.
