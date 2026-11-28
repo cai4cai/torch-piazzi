@@ -105,7 +105,9 @@ def lbfgs_armijo(
         step_tol (float, optional): stop, as converged, once an accepted step from the
             L-BFGS memory has a max-norm below this. A step shortened by backtracking counts
             only if the full step was below it too, or if the step made no measurable progress
-            (at a minimiser the line search may accept a step that changes nothing).
+            (at a minimiser the line search may accept a step that changes nothing), or if the
+            full step stayed within ``sqrt(eps)`` of ``x``, the precision to which a minimiser
+            is determined.
             Default: ``1e-5``
         callback (Callable, optional): called with an :class:`piazzi.IterationInfo` after
             every iteration, accepted or not; returning ``True`` stops the run.
@@ -232,6 +234,7 @@ def lbfgs_armijo(
         # A step from the L-BFGS memory estimates the distance to the minimiser: if it leaves x
         # unmoved (and its value is finite), x is a minimiser to working precision.
         first_unmoved = used_memory and math.isfinite(f_new.item()) and unmoved(manifold, x, x_new)
+        x_first = x_new
         n_bt = 0
         while not armijo_ok(f_new.item(), f_val + c1 * t * gtd) and n_bt < max_backtracks:
             reject(pending)
@@ -308,7 +311,7 @@ def lbfgs_armijo(
             if len(S) > history_size:
                 S.pop(0)
                 Y.pop(0)
-        f_start = f
+        f_start, x_prev = f, x
         x, f, aux, g = x_new, f_new, aux_new, g_new
         stop = callback is not None and callback(
             IterationInfo(it, x.reshape(shape), f, f_start, aux, True, counts["fg"], counts["f"])
@@ -316,11 +319,14 @@ def lbfgs_armijo(
         # An unscaled steepest-descent step (no curvature pairs yet) says nothing about
         # convergence: with a tiny gradient it is tiny too.
         # A backtracked step is short without the minimiser being any closer: it counts only if
-        # the full step was short too, or if it made no measurable progress (at a minimiser, the
-        # Armijo bound can round to the loss itself, so a step that changes nothing passes).
+        # the full step was short too, if the full step stayed within sqrt(eps) of x (per entry,
+        # at its scale: a minimiser is only determined that far, and at a float32 noise floor the
+        # full steps are about that size), or if it made no measurable progress (at a minimiser
+        # the Armijo bound can round to the loss itself, so a step that changes nothing passes).
         step = s_vec.abs().max().item()
         no_progress = f_start.item() - f.item() <= 8 * torch.finfo(f.dtype).eps * abs(f_start.item())
-        if used_memory and step < step_tol and (step0 < step_tol or no_progress):
+        full_near = within(manifold, x_prev, x_first, torch.finfo(x.dtype).eps ** 0.5)
+        if used_memory and step < step_tol and (step0 < step_tol or full_near or no_progress):
             return result(it + 1, True, "step below step_tol")
         if stop:
             return result(it + 1, False, "stopped by callback")

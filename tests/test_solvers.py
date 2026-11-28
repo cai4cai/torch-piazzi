@@ -272,9 +272,10 @@ def registration(seed, dtype):
 
 
 # Seeds 0-7, plus those where L-BFGS once ended on a steepest-descent failure after a
-# steepest-descent step had succeeded on noise (58, 63, 113, 126, 189), or one step short of
-# the resolution of x at 32 ulps (185).
-@pytest.mark.parametrize("seed", [*range(8), 58, 63, 113, 126, 185, 189])
+# steepest-descent step had succeeded on noise (58, 63, 113, 126, 189), one step short of the
+# resolution of x at 32 ulps (185), or on a double failure when backtracked steps at the noise
+# floor no longer counted as converged (111, 134, 148, 170; #29).
+@pytest.mark.parametrize("seed", [*range(8), 58, 63, 111, 113, 126, 134, 148, 170, 185, 189])
 @pytest.mark.parametrize("solver", ["lm", "gn", "lbfgs"])
 def test_float32_registration_converges_near_a_zero_residual(solver, seed):
     """Near a zero residual the loss's rounding noise is absolute: the relative noise test cannot
