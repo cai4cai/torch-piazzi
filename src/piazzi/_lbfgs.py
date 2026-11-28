@@ -8,6 +8,7 @@ from collections.abc import Callable
 import torch
 
 from ._common import (
+    RESOLUTION_ULPS,
     Callback,
     IterationInfo,
     OptimizeResult,
@@ -21,6 +22,12 @@ from ._common import (
 from ._manifolds import Manifold
 
 __all__ = ["lbfgs_armijo"]
+
+# How far (in units in the last place of each entry's scale) the full step of a backtracked
+# L-BFGS step may move x for that step to count towards step_tol: 16 times the resolution of x,
+# a 6x margin over the largest full step seen at a float32 noise floor (171 ulps), and far
+# below sqrt(eps) (~2900 ulps in float32), which admitted full steps of 0.35 at |x| ~ 1000.
+NEAR_ULPS = 16 * RESOLUTION_ULPS
 
 
 def lbfgs_armijo(
@@ -106,8 +113,8 @@ def lbfgs_armijo(
             L-BFGS memory has a max-norm below this. A step shortened by backtracking counts
             only if the full step was below it too, or if the step made no measurable progress
             (at a minimiser the line search may accept a step that changes nothing), or if the
-            full step stayed within ``sqrt(eps)`` of ``x``, the precision to which a minimiser
-            is determined.
+            full step barely moved ``x`` (1024 units in the last place of each entry's scale),
+            as at a float32 noise floor.
             Default: ``1e-5``
         callback (Callable, optional): called with an :class:`piazzi.IterationInfo` after
             every iteration, accepted or not; returning ``True`` stops the run.
@@ -322,13 +329,14 @@ def lbfgs_armijo(
         # An unscaled steepest-descent step (no curvature pairs yet) says nothing about
         # convergence: with a tiny gradient it is tiny too.
         # A backtracked step is short without the minimiser being any closer: it counts only if
-        # the full step was short too, if the full step stayed within sqrt(eps) of x (per entry,
-        # at its scale: a minimiser is only determined that far, and at a float32 noise floor the
-        # full steps are about that size), or if it made no measurable progress (at a minimiser
+        # the full step was short too, if the full step barely moved x (within NEAR_ULPS units
+        # in the last place of each entry's scale: at a float32 noise floor near a zero residual,
+        # where the loss's absolute noise makes backtracked steps succeed on noise, the full
+        # steps measured 0.25 to 171 ulps), or if it made no measurable progress (at a minimiser
         # the Armijo bound can round to the loss itself, so a step that changes nothing passes).
         step = s_vec.abs().max().item()
         no_progress = f_start.item() - f.item() <= 8 * torch.finfo(f.dtype).eps * abs(f_start.item())
-        full_near = within(manifold, x_prev, x_first, torch.finfo(x.dtype).eps ** 0.5)
+        full_near = within(manifold, x_prev, x_first, NEAR_ULPS * torch.finfo(x.dtype).eps)
         if used_memory and step < step_tol and (step0 < step_tol or full_near or no_progress):
             return result(it + 1, True, "step below step_tol")
         if stop:
