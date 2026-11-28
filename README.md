@@ -7,15 +7,15 @@
 
 > Named after Giuseppe Piazzi, who discovered the dwarf planet Ceres in 1801. Gauss recovered Ceres from Piazzi's observations by inventing least squares.
 
-**Status:** pre-alpha, and the API may change. The package is not on PyPI yet.
+**Status:** alpha (pre-release on PyPI), and the API may change.
 
 **Documentation:** <https://cai4cai.github.io/torch-piazzi/>
 
 ## Installation
 
 ```bash
-pip install "piazzi @ git+https://github.com/cai4cai/torch-piazzi"
-pip install "piazzi[scipy,pypose,torchmin,sparse] @ git+https://github.com/cai4cai/torch-piazzi"  # optional backends and sparse CG
+pip install piazzi
+pip install "piazzi[scipy,pypose,torchmin,sparse]"  # optional backends and sparse CG
 ```
 
 ## Example

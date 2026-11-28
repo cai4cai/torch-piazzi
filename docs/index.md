@@ -48,7 +48,7 @@ Every public function and class.
 :::
 ::::
 
-**Status:** pre-alpha, and the API may change. The package is not on PyPI yet.
+**Status:** alpha (pre-release on PyPI), and the API may change.
 
 ```{toctree}
 :hidden:

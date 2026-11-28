@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-piazzi is pre-alpha and not yet on PyPI. Development so far:
+- Strip local `+...` version identifiers during `workflow_dispatch` builds so untagged branches can be dry-run on TestPyPI.
+- Update the README and documentation for PyPI installation, and add a maintainer release guide.
+
+## 0.1.0a1
+
+First alpha pre-release on PyPI:
 
 - Solvers: L-BFGS with an Armijo line search, Gauss-Newton and Levenberg-Marquardt, `least_squares` with robust losses, and `minimize` with `torch.optim` optimisers.
 - `finite_difference`, a wrapper that gives black-box objectives finite-difference derivatives.

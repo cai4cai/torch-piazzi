@@ -16,6 +16,11 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
+      - name: Strip local version for TestPyPI dry runs
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          version=$(uv run --no-project --with hatchling --with hatch-vcs hatchling version)
+          echo "SETUPTOOLS_SCM_PRETEND_VERSION=${version%%+*}" >> "$GITHUB_ENV"
       - run: uv build
       - run: uvx twine check dist/*
       - uses: actions/upload-artifact@v4

@@ -24,12 +24,32 @@ piazzi requires Python 3.11 or later and PyTorch 2.15 or later; the optional ext
 
 ## Releases and versioning
 
-Versions follow PEP 440 and are derived from git tags by `hatch-vcs` (`src/piazzi/_version.py` is generated at build time and gitignored). While the API is settling, releases use `0.x` versions, starting with `0.1.0a1`.
+Versions follow PEP 440 and are derived from `v*` git tags by `hatch-vcs` (`src/piazzi/_version.py` is generated at build time and gitignored). Between tags, builds get a `.devN+g<hash>` suffix (plus a `.dYYYYMMDD` date suffix when the working tree has local changes). While the API is settling, releases use `0.x` versions, starting with `0.1.0a1` alpha pre-releases.
 
-Releases are built and uploaded by `.github/workflows/publish.yml` using PyPI Trusted Publishing (OIDC):
+Releases are built and uploaded by `.github/workflows/publish.yml` using PyPI Trusted Publishing (OIDC), so no API tokens or secrets are stored in the repository.
 
-- Run the workflow manually (`workflow_dispatch`) to build and publish a test release to TestPyPI.
-- Publish a GitHub Release on a version tag (for example `v0.1.0a1`) to publish to PyPI.
+### One-time repository setup
+
+1. In the GitHub repository settings, ensure the `testpypi` and `pypi` deployment environments exist (with any desired branch/tag protection or reviewer rules on `pypi`).
+2. On TestPyPI and PyPI, configure Trusted Publishing (or a Pending Publisher before the first upload) pointing to this repository, `.github/workflows/publish.yml`, and the matching environment name (`testpypi` or `pypi`).
+
+### Testing a release on TestPyPI
+
+1. Verify that `ruff`, `pyright`, `pytest`, the notebooks, and `sphinx-build` pass on the branch or tag you want to test.
+2. Open **Actions → publish → Run workflow** (`workflow_dispatch`) on GitHub and choose the branch or tag to test. Because TestPyPI rejects `+...` local version identifiers, `publish.yml` strips any `+...` suffix via `SETUPTOOLS_SCM_PRETEND_VERSION` when triggered via `workflow_dispatch`, allowing dry runs from untagged commits as well as tags.
+3. Verify the uploaded package in a clean virtual environment before publishing to PyPI:
+
+```bash
+pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple piazzi==<version>
+```
+
+### Publishing a release to PyPI
+
+1. On `main`, move the items under `## Unreleased` in `docs/changelog.md` into a new section for the release version (for example `## 0.1.0a2`) and merge that PR before tagging.
+2. In GitHub **Releases → Draft a new release**, create a tag matching the version with a `v` prefix (for example `v0.1.0a2`) targeting `main`.
+3. Check **Set as a pre-release** for `a` / `b` / `rc` versions, add the release notes, and click **Publish release**.
+4. The `publish-pypi` job builds from the clean tag (with no local version suffix), validates metadata with `twine check`, and uploads the distributions and build attestations to PyPI.
+5. Verify the rendered PyPI project page and test installing the published version into a clean environment.
 
 ## Workarounds for upstream bugs
 

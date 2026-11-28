@@ -3,7 +3,7 @@
 piazzi also has thin wrappers around third-party solvers, so you can compare backends on the same problem. Each wrapper takes PyTorch functions (converting to the backend's arrays where it needs them) and returns the same {class}`~piazzi.OptimizeResult` as the native solvers. The backends are optional dependencies, and `import piazzi` does not load them.
 
 ```bash
-pip install "piazzi[scipy,torchmin] @ git+https://github.com/cai4cai/torch-piazzi"
+pip install "piazzi[scipy,torchmin]"
 ```
 
 ```python
