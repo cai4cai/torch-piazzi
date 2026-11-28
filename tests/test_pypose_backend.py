@@ -224,3 +224,28 @@ def test_stays_on_the_device_of_x0(device):
     res = pzp.least_squares(lambda p: p[0] * torch.exp(-p[1] * t) - y, x0)
     assert res.converged and res.x.device == x0.device and res.fun.device == x0.device
     assert torch.allclose(res.x.cpu(), torch.tensor([2.5, 1.3]), atol=1e-4)
+
+
+@needs_pypose
+def test_user_prints_are_not_swallowed(capsys):
+    fun, x0 = exp_fit()
+    pzp.least_squares(lambda x: (print("evaluated"), fun(x))[1], x0, max_iter=1)
+    assert "evaluated" in capsys.readouterr().out
+
+
+@needs_pypose
+def test_solver_failure_is_reported():
+    def failing(A, b):
+        raise RuntimeError("singular")
+
+    fun, x0 = exp_fit()
+    res = pzp.least_squares(fun, x0, solver=failing)
+    assert not res.converged and "linear solver failed" in res.message and torch.equal(res.x, x0)
+
+
+@needs_pypose
+def test_convergence_is_relative_to_the_scale_of_x():
+    t = torch.linspace(1, 2, 20, dtype=torch.float64)
+    scale = 1e-8
+    res = pzp.least_squares(lambda x: x[0] * t - 2.0 * scale * t, torch.tensor([0.5 * scale], dtype=torch.float64))
+    assert torch.allclose(res.x, torch.tensor([2.0 * scale], dtype=torch.float64), rtol=1e-6)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
-import io
 import math
 from collections.abc import Callable
 from typing import Any, cast
@@ -61,6 +59,25 @@ class _Residual(nn.Module):
         return (r.tensor() if isinstance(r, pp.LieTensor) else r).reshape(-1)  # keeps the graph
 
 
+class _RecordingSolver(nn.Module):
+    """Wraps a PyPose linear solver: a failure is recorded and answered with a zero step.
+
+    PyPose's Levenberg-Marquardt catches solver exceptions and prints them; a zero step makes it stop
+    the iteration the same way, and the wrapper reports the failure itself.
+    """
+
+    def __init__(self, solver):
+        super().__init__()
+        self.solver, self.failed = solver, False
+
+    def forward(self, A, b, *args, **kwargs):
+        try:
+            return self.solver(A, b, *args, **kwargs)
+        except Exception:
+            self.failed = True
+            return torch.zeros_like(b)
+
+
 def _make(table: dict[str, str], module, kind: str, spec, options: dict | None):
     if spec is None or not isinstance(spec, str):
         if options:
@@ -105,11 +122,12 @@ def least_squares(
     runs up to ``max_iter`` steps and applies piazzi's rules to the loss each returns:
 
     - an iteration whose cost is below the previous one is accepted. The run converges when the
-      step is below ``step_tol`` (max-norm, in the tangent space for a ``LieTensor``) or the cost
-      is exactly zero;
+      step is below ``step_tol`` (max-norm, relative to ``max|x|``; in the tangent space for a
+      ``LieTensor``) and the cost fell by less than ``step_tol`` times itself (a heavily damped
+      step is small without being near a minimiser), or when the cost is exactly zero;
     - an iteration whose cost is not below the previous one is rejected (the previous point is
-      restored), except that a step below ``step_tol`` that raises the cost by no more than
-      rounding noise (``8 * eps * cost``) is accepted and converged. Any other such step ends
+      restored), and the run converges if the step is below ``step_tol`` and the cost rose by no
+      more than rounding noise (``8 * eps * cost``). Any other such step ends
       the run unconverged: Gauss-Newton takes full steps without a line search and can
       diverge, and Levenberg-Marquardt stops there after ``reject`` rejected trials. The run
       then returns the best point it accepted;
@@ -153,7 +171,8 @@ def least_squares(
         has_aux (bool, optional): whether ``fun`` also returns an auxiliary output (any tree of
             tensors), returned detached in ``result.aux`` and ``info.aux``. Default: ``False``
         max_iter (int, optional): maximum number of PyPose steps. Default: ``100``
-        step_tol (float, optional): convergence tolerance on the size of an accepted step.
+        step_tol (float, optional): convergence tolerance on the size of an accepted step, relative to
+            ``max|x|`` (absolute in the tangent space of a ``LieTensor``).
             Default: ``1e-5``
         callback (Callable, optional): called after every iteration, accepted or not, with an
             :class:`piazzi.IterationInfo`; returning ``True`` stops the run. Default: ``None``
@@ -186,6 +205,9 @@ def least_squares(
         raise ValueError("max_iter must be non-negative")
 
     pp_solver = _make(_SOLVERS, pp.optim.solver, "solver", solver, solver_options)
+    if pp_solver is None:  # PyPose's default: PINV for Gauss-Newton, Cholesky for Levenberg-Marquardt
+        pp_solver = pp.optim.solver.PINV() if method == "gn" else pp.optim.solver.Cholesky()
+    pp_solver = _RecordingSolver(pp_solver)
     model = _Residual(fun, x0, has_aux)
     if method == "gn":
         reject = 0
@@ -222,25 +244,33 @@ def least_squares(
 
     for it in range(max_iter):
         x_old, cost_old, cost_old_t, aux_old = current(), cost, cost_t, aux
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):  # PyPose prints when its linear solver fails
-            loss = opt.step(None)
-        solver_failed = "Linear solver failed" in out.getvalue()
+        pp_solver.failed = False
+        loss = opt.step(None)
+        solver_failed = pp_solver.failed
         cost_t = (0.5 * torch.as_tensor(loss)).detach().clone()  # PyPose's stubs say float; it is a tensor
         cost = float(cost_t)
         x_new = current()
         n_iter = it + 1
         noise = 8 * eps * cost_old
         step = tangent_step(x_new, x_old) if math.isfinite(cost) else math.inf
+        # Relative to the scale of x (a tangent step on a LieTensor is already scale free).
+        small = step < step_tol * (step_tol + (1.0 if is_lie else float(x_old.abs().max())))
         if not math.isfinite(cost):
             accepted, stop, converged, message = False, True, False, "the cost became non-finite"
-        elif cost < cost_old or (step < step_tol and cost <= cost_old + noise):
+        elif cost < cost_old:
             accepted, stop = True, False
-            aux = model.memo[2] if model.memo is not None and torch.equal(model.memo[0], _plain(x_new)) else aux
+            if model.memo is None or not torch.equal(model.memo[0], _plain(x_new)):
+                with torch.no_grad():
+                    model()  # not the last point evaluated (PyPose's undo drifted): evaluate it, counted
+            aux = model.memo[2]
+            # A small step must also lower the cost by little: a heavily damped step is small far from a minimiser.
             if cost == 0.0:
                 stop, converged, message = True, True, "the cost is zero"
-            elif step < step_tol:
+            elif small and cost_old - cost <= max(noise, step_tol * cost_old):
                 stop, converged, message = True, True, "the step is below step_tol"
+        elif small and cost <= cost_old + noise and not solver_failed:
+            # No measurable decrease from a small step: a minimiser to working precision. Keep the previous point.
+            accepted, stop, converged, message = False, True, True, "the step is below step_tol, with no decrease"
         else:
             accepted, stop, converged = False, True, False
             message = (
