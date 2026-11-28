@@ -44,6 +44,7 @@ build the normal equations yourself.
 
    OptimizeResult
    IterationInfo
+   print_progress
 
 :doc:`Robust losses <losses>`
 -----------------------------

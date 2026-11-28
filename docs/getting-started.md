@@ -2,7 +2,7 @@
 
 ## Installation
 
-piazzi needs Python 3.10 or later and PyTorch. It is not on PyPI yet, so install it from GitHub:
+piazzi needs Python 3.11 or later and PyTorch 2.15 or later. It is not on PyPI yet, so install it from GitHub:
 
 ```bash
 pip install "piazzi @ git+https://github.com/cai4cai/torch-piazzi"
@@ -64,7 +64,7 @@ Every solver returns a {class}`piazzi.OptimizeResult`:
 
 ## Watching progress
 
-Pass `callback(info)` to record the iterates. It receives an {class}`piazzi.IterationInfo` after every iteration, accepted or not, with the evaluation counts so far. Return `True` to stop the run.
+Pass `callback(info)` to record the iterates. It receives an {class}`piazzi.IterationInfo` after every iteration, accepted or not, with the evaluation counts so far. Return `True` to stop the run. To just watch a run, pass `callback=piazzi.print_progress()`, which prints one row per iteration.
 
 ```python
 history = []
