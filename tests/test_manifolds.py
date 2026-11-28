@@ -280,7 +280,7 @@ def test_so3_rotation_fit():
 
 def test_least_squares_system_tangent_shapes(registration):
     residuals, *_ = registration
-    loss, g, H = piazzi.least_squares_system(residuals, manifold=piazzi.SE3())(random_pose(4))
+    _, g, H = piazzi.least_squares_system(residuals, manifold=piazzi.SE3())(random_pose(4))
     assert g.shape == (6,) and H.shape == (6, 6)
     assert torch.linalg.matrix_rank(H).item() == 6
 
@@ -367,3 +367,19 @@ def test_log_derivatives_finite_at_exact_half_turn(mode, axis):
         assert jac(piazzi.so3_log)(R).isfinite().all()
         assert jac(piazzi.se3_log)(T).isfinite().all()
     assert piazzi.so3_log(R).norm().item() == pytest.approx(math.pi)
+
+
+def test_entry_scale():
+    """The size each entry of a point is computed at, for the solvers' resolution test."""
+    T = piazzi.se3_exp(torch.tensor([3.0, -4.0, 0.0, 0.1, 0.2, 0.3], dtype=D))
+    scale = piazzi.SE3().entry_scale(T)
+    assert torch.equal(scale[:3, :3], torch.ones(3, 3, dtype=D)) and torch.equal(scale[3], torch.ones(4, dtype=D))
+    torch.testing.assert_close(scale[:3, 3], torch.full((3,), T[:3, 3].norm().item(), dtype=D))
+    pivot = torch.tensor([100.0, 0.0, 0.0], dtype=D)
+    torch.testing.assert_close(piazzi.SE3(pivot=pivot).entry_scale(T)[:3, 3], torch.full((3,), 100.0, dtype=D))
+    assert torch.equal(piazzi.SO3().entry_scale(T[:3, :3]), torch.ones(3, 3, dtype=D))
+    v = torch.tensor([-2.0, 0.5], dtype=D)
+    assert torch.equal(piazzi.Euclidean().entry_scale(v), v.abs())
+    M = piazzi.Product(piazzi.SO3(), piazzi.Euclidean(2))
+    x = M.join(T[:3, :3], v)
+    assert torch.equal(M.entry_scale(x), torch.cat([torch.ones(9, dtype=D), v.abs()]))

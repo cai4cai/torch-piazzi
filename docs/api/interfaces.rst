@@ -11,6 +11,7 @@ setting.
 
 .. autofunction:: least_squares
 .. autofunction:: minimize
+.. autofunction:: finite_difference
 
 .. py:data:: MINIMIZE_METHODS
    :type: dict[str, Callable[..., OptimizeResult]]

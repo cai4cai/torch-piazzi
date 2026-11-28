@@ -6,6 +6,7 @@ Development uses [uv](https://docs.astral.sh/uv/):
 uv sync --group dev --group notebooks
 uv run ruff check .
 uv run ruff format --check .
+uv run pyright
 uv run pytest -q
 uv run python scripts/execute_notebooks.py   # when the library or a notebook changed
 ```

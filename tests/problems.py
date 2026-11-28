@@ -64,7 +64,7 @@ def fun_rosenbrock_cropped(x):
 
 def fun_bvp(x):
     """Discrete boundary value problem (SciPy gh-5556)."""
-    n = int(round(x.numel() ** 0.5))
+    n = round(x.numel() ** 0.5)
     x = x.reshape(n, n)
     u = torch.nn.functional.pad(x, (1, 1, 1, 1))
     y = u[:-2, 1:-1] + u[2:, 1:-1] + u[1:-1, :-2] + u[1:-1, 2:] - 4 * x + x**3

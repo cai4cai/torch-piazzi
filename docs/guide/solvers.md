@@ -40,7 +40,7 @@ Steps are capped so that no coordinate moves more than `max_step` (default 1). S
 
 ## Results and stopping
 
-Every solver returns an {class}`~piazzi.OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. `converged` means a minimiser was reached to working precision: the step fell below `step_tol`, or the gradient is zero. In float32, Gauss-Newton, Levenberg-Marquardt and L-BFGS also recognise a minimiser once the predicted decrease falls below the rounding noise of the loss.
+Every solver returns an {class}`~piazzi.OptimizeResult` with `x`, `fun`, `aux`, evaluation counts, `converged` and `message`. `converged` means a minimiser was reached to working precision: the step fell below `step_tol`, or the gradient is zero. In float32, Gauss-Newton, Levenberg-Marquardt and L-BFGS also recognise a minimiser once the predicted decrease falls below the rounding noise of the loss, or once a Newton-like step no longer moves `x` beyond a few units in the last place of each entry (message `step below the resolution of x`). The second rule catches minimisers near a zero residual, where the loss's rounding noise is absolute rather than relative to the loss.
 
 The evaluation counts are split by kind, because their costs differ: `n_fun_grad` (value and gradient), `n_fun` (value only, as in a line search) and `n_system` (normal equations).
 
