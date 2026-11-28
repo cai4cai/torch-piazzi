@@ -128,15 +128,16 @@ def test_strong_wolfe_ignores_value_fun():
 def test_strong_wolfe_accepted_steps_satisfy_the_wolfe_conditions():
     # Every accepted step must satisfy sufficient decrease and, unless the search ran out of
     # budget, the strong curvature condition; so s^T y > 0 at every iteration.
-    c1 = 1e-4
+    c1, c2 = 1e-4, 0.9
     x_prev, f_prev, g_prev = None, None, None
     checked = 0
+    curvature_held = 0
 
     def fun(x):
         return rosen(x)
 
     def cb(info):
-        nonlocal x_prev, f_prev, g_prev, checked
+        nonlocal x_prev, f_prev, g_prev, checked, curvature_held
         x = info.x.clone().requires_grad_(True)
         f = rosen(x)
         (g,) = torch.autograd.grad(f, x)
@@ -145,11 +146,22 @@ def test_strong_wolfe_accepted_steps_satisfy_the_wolfe_conditions():
             assert f.item() <= f_prev + c1 * torch.dot(g_prev, s).item() + 1e-12
             assert torch.dot(s, g - g_prev).item() > 0
             checked += 1
+            # Strong curvature condition, |g.s| <= c2 |g_prev.s|, unless the search ended on its budget.
+            curvature_held += abs(torch.dot(g, s).item()) <= c2 * abs(torch.dot(g_prev, s).item()) * (1 + 1e-9)
         x_prev, f_prev, g_prev = x.detach(), f.item(), g
         return False
 
-    piazzi.lbfgs(fun, torch.tensor([-1.2, 1.0], dtype=F64), line_search="strong_wolfe", callback=cb, **OPTIONS)
+    piazzi.lbfgs(
+        fun,
+        torch.tensor([-1.2, 1.0], dtype=F64),
+        line_search="strong_wolfe",
+        callback=cb,
+        max_step=1e3,
+        max_backtracks=30,
+        **OPTIONS,
+    )
     assert checked > 10
+    assert curvature_held == checked
 
 
 def test_strong_wolfe_first_trial_failing_armijo_is_bracketed():
@@ -288,3 +300,30 @@ def test_strong_wolfe_budget_exhausted_while_expanding_keeps_the_better_point():
     )
     x_new, f_new, _, _, t, _, _, ok = out
     assert ok and t == 1.0 and f_new.item() == -0.2 and x_new.item() == 1.0
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64], ids=["float32", "float64"])
+@pytest.mark.parametrize("line_search", SEARCHES)
+def test_tiny_parameters_are_judged_at_their_own_scale(line_search, dtype):
+    # Parameters around 1e-8: a bracket is collapsed when its ends cannot be told apart at the
+    # resolution of x, not when its width in x falls below an absolute epsilon (1.2e-7 in float32,
+    # far above these parameters). With that absolute test, strong_wolfe and hager_zhang gave up
+    # after their first trial in float32 and stopped with a failed search at the start.
+    scale = 1e-8
+    target = torch.tensor([3.0, -2.0], dtype=dtype) * scale
+
+    def fun(x):
+        z = (x - target) / scale
+        return 0.5 * (z**2).sum() + 0.05 * z[0] ** 4 + 0.3 * torch.cos(2 * z[1])
+
+    x0 = torch.tensor([1.0, 1.0], dtype=dtype) * scale
+    res = piazzi.lbfgs(
+        fun,
+        x0,
+        line_search=line_search,
+        max_step=10 * scale,  # in the units of the problem, as the docs advise
+        step_tol=1e-13,
+        max_iter=100,
+    )
+    assert res.converged, res.message
+    assert res.n_iter > 1 and res.fun.item() < fun(x0).item()

@@ -271,9 +271,27 @@ def test_budget_is_exact_and_no_point_is_evaluated_twice(max_ls):
 
 
 def test_a_step_never_ends_at_zero():
-    # A function that rises immediately gives no acceptable step.
-    (_, _, _, _, t, _, _, ok), _, _ = search(lambda t: (-1e-3 * t + 50 * t * t, -1e-3 + 100 * t), 1.0, max_ls=3)
-    assert not ok or t > 0
+    # The loss falls only up to t = 1e-5 and is far higher at the first trial. With no budget to
+    # look further, the search fails at that trial; with a budget it may find a point, but it
+    # never returns the start (t = 0), whether it counts as a success or not.
+    def phi(t):
+        return -1e-3 * t + 50 * t * t, -1e-3 + 100 * t
+
+    (_, _, _, _, t, _, _, ok), tried, _ = search(phi, 1.0, max_ls=0)
+    assert not ok and t == 1.0 and tried == [1.0]
+    for max_ls in (1, 2, 3, 10):
+        (_, f_t, _, _, t, _, _, ok), _, (f0, _) = search(phi, 1.0, max_ls=max_ls)
+        assert t > 0
+        assert not ok or f_t.item() <= f0
+
+
+def test_broken_bracket_falls_back_instead_of_looping():
+    # A gradient that disagrees with the values (here: always positive) breaks the bracket
+    # invariant; the search must end within its budget, as a failure.
+    (_, _, _, _, t, _, _, _), tried, _ = search(
+        lambda t: (-t if t == 0 else 1.0 + t, -1.0 if t == 0 else 1.0), 1.0, max_ls=20
+    )
+    assert len(tried) <= 21 and t > 0
 
 
 # ---- piazzi.lbfgs(line_search="hager_zhang") ----

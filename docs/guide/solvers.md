@@ -20,7 +20,7 @@ Both accept `manifold=` (see {doc}`manifolds`), `has_aux=` and `callback=`, and 
 |---|---|---|
 | {func}`~piazzi.gauss_newton` with `method="lm"`, or {func}`~piazzi.levenberg_marquardt` | `system(x) -> (loss, g, H)` | Levenberg-Marquardt with Nielsen's damping update. |
 | {func}`~piazzi.gauss_newton` with `method="gn"` | `system(x) -> (loss, g, H)` | Gauss-Newton with Armijo backtracking. |
-| {func}`~piazzi.lbfgs` | `f(x)`, gradient from autograd | L-BFGS with Armijo backtracking (the default) or a strong Wolfe line search (`line_search="strong_wolfe"`). With Armijo it usually costs one evaluation per iteration. Each trial point is evaluated with its autograd graph, and the backward pass runs only at the accepted point, so a rejected trial costs a forward pass. With strong Wolfe every trial needs its gradient, so a rejected trial costs a value-and-gradient evaluation. |
+| {func}`~piazzi.lbfgs` | `f(x)`, gradient from autograd | L-BFGS with Armijo backtracking (the default), a strong Wolfe line search (`line_search="strong_wolfe"`) or the Hager-Zhang line search (`line_search="hager_zhang"`). With Armijo it usually costs one evaluation per iteration. Each trial point is evaluated with its autograd graph, and the backward pass runs only at the accepted point, so a rejected trial costs a forward pass. With strong Wolfe or Hager-Zhang every trial needs its gradient, so a rejected trial costs a value-and-gradient evaluation. |
 
 {func}`~piazzi.least_squares_system` is the building block between the two layers: it turns residuals into the `system(x) -> (loss, g, H)` that {func}`~piazzi.gauss_newton` needs, that is `(0.5‖r‖², Jᵀr, JᵀJ)` or its robust equivalent.
 

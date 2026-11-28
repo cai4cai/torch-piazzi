@@ -25,7 +25,7 @@ import math
 
 import torch
 
-from ._common import unmoved
+from ._common import unmoved, within
 
 __all__: list[str] = []  # private module; nothing exported directly
 
@@ -78,6 +78,15 @@ def cubic_interp(
     else:
         t_min = (lo + hi) / 2.0
     return min(max(t_min, lo), hi)
+
+
+def _bracket_resolved(manifold, retract, x: torch.Tensor, d: torch.Tensor, a: float, b: float) -> bool:
+    """Whether the points at steps ``a`` and ``b`` along ``d`` cannot be told apart at the resolution of ``x``.
+
+    Compared entry by entry, each at its own scale (see :func:`piazzi._common.within`), so that a
+    problem whose parameters are all tiny, or huge, is judged like any other.
+    """
+    return within(manifold, retract(manifold, x, a * d), retract(manifold, x, b * d), torch.finfo(x.dtype).eps)
 
 
 def _armijo_ok(fn: float, bound: float) -> bool:
@@ -209,8 +218,6 @@ def wolfe_search(
     Returns:
         tuple: ``(x_new, f_new, aux_new, g_new, t, x_first, first_unmoved, search_ok)``
     """
-    d_norm = d.abs().max().item()
-
     # ---- bracketing phase (Algorithm 3.5) ----
     t_prev, f_prev, gtd_prev = 0.0, f_val, gtd
     g_prev: torch.Tensor = g
@@ -316,8 +323,8 @@ def wolfe_search(
     high_pos = 1 - low_pos
     insuf_progress = False
     while ls_iter < max_ls:
-        # Bracket collapsed below floating-point resolution.
-        if abs(bracket[1] - bracket[0]) * d_norm < torch.finfo(g.dtype).eps:
+        # Bracket collapsed below the resolution of x.
+        if _bracket_resolved(manifold, retract, x, d, bracket[0], bracket[1]):
             break
         # Cubic interpolation within the current bracket.
         t = cubic_interp(
@@ -391,8 +398,16 @@ def wolfe_search(
     return x_new, f_new, aux_new, g_new_v, t, x_first, first_unmoved, search_ok
 
 
-class _BudgetExhausted(Exception):
+class _SearchEnded(Exception):
+    """Ends the Hager-Zhang search early; the search then falls back to its best point."""
+
+
+class _BudgetExhausted(_SearchEnded):
     """Raised by the Hager-Zhang search's evaluator once its trial budget is spent."""
+
+
+class _BrokenBracket(_SearchEnded):
+    """Raised when a bracket end that must descend does not: the gradient is inconsistent with the values."""
 
 
 def hager_zhang_search(
@@ -426,6 +441,9 @@ def hager_zhang_search(
     As in the references, a point that satisfies the approximate conditions may be higher than
     the starting value, by at most ``epsilon |f|``; ``epsilon=0`` makes the search monotone.
 
+    If the gradient is inconsistent with the values, so that a bracket end that must descend does
+    not, the search ends like a spent budget: it returns its best acceptable point, or fails.
+
     Difference from the Julia code: the budget is a number of evaluations (``max_ls`` after the
     first), enforced exactly. When the budget is spent, or no finite point is found, the best
     evaluated point whose loss is at most ``f + epsilon |f|`` and which satisfies Armijo (or the
@@ -455,8 +473,6 @@ def hager_zhang_search(
     """
     rho, gamma, psi3 = 5.0, 2.0 / 3.0, 0.1  # HZ's expansion factor, contraction test and shrink factor
     dtype_eps = torch.finfo(g.dtype).eps
-    d_norm = d.abs().max().item()
-    x_scale = max(x.abs().max().item(), 1.0)
     phi_lim = f_val + epsilon * abs(f_val)
 
     # Every evaluated point; index 0 is the start.
@@ -480,8 +496,8 @@ def hager_zhang_search(
     def finite(i: int) -> bool:
         return math.isfinite(values[i]) and math.isfinite(slopes[i])
 
-    def collapsed(a: float, b: float) -> bool:  # bracket below the resolution of t, or of x
-        return b - a <= 2.2e-16 * abs(b) or (b - a) * d_norm <= dtype_eps * x_scale
+    def collapsed(a: float, b: float) -> bool:  # bracket below the resolution of t, or of x (entry by entry)
+        return b - a <= 2.2e-16 * abs(b) or _bracket_resolved(manifold, retract, x, d, a, b)
 
     def satisfies_wolfe(i: int) -> bool:
         t, f_t, df_t = alphas[i], values[i], slopes[i]
@@ -536,7 +552,7 @@ def hager_zhang_search(
 
     def secant2(ia: int, ib: int):  # HZ, stages S1-S4: returns (wolfe found, iA, iB)
         if not slopes[ia] < 0.0:  # the bracket invariant: inaccurate gradients can break it
-            raise _BudgetExhausted
+            raise _BrokenBracket
         a, b = alphas[ia], alphas[ib]
         c = secant(ia, ib)
         if not a < c < b:  # not finite, or on an endpoint: bisect instead
@@ -626,7 +642,7 @@ def hager_zhang_search(
                 ia, ib, found = update(i_a, i_b, im)
                 if found:
                     return result(ib)
-    except _BudgetExhausted:
+    except _SearchEnded:
         pass
     # Budget spent, or no finite point: the best acceptable point, if any.
     best = min((i for i in range(1, len(alphas)) if acceptable(i)), key=lambda i: values[i], default=None)
