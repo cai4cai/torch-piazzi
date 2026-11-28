@@ -7,7 +7,7 @@ Expectations for anyone changing this repository, human or AI agent. The [README
 Deterministic PyTorch solvers for nonlinear fitting problems (pose or camera registration, curve fitting, bundle adjustment) where every objective evaluation is expensive. Two consequences shape most decisions:
 
 - **Every evaluation counts.** Never evaluate the objective, its gradient or the normal equations twice at the same point, never compute a gradient that will be thrown away, and count every evaluation by kind (`n_fun_grad`, `n_fun`, `n_system`) in both `OptimizeResult` and `IterationInfo`. A change that adds evaluations needs a reason in its commit message.
-- **Results must be trustworthy.** `converged=True` means a minimiser was reached to working precision, in float32 as well as float64; `message` says why the run stopped. A solver must never accept a trial point with a non-finite value, step uphill, or report convergence at a point it has not checked.
+- **Results must be trustworthy.** `converged=True` means a minimiser was reached to working precision, in float32 as well as float64; `message` says why the run stopped. A solver must never accept a trial point with a non-finite value, step uphill, or report convergence at a point it has not checked. The one exception to "uphill" is a documented tolerance taken from a reference algorithm, such as the approximate Wolfe conditions of Hager-Zhang (`hz_epsilon`: a step may raise the loss by at most `hz_epsilon * |loss|`, and `hz_epsilon=0` forbids it); the docstring states the bound and a test checks it.
 
 ## Layout
 

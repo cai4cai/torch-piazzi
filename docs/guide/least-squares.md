@@ -8,7 +8,7 @@ where $C$ is `f_scale`, the soft margin between inlier and outlier residuals. It
 
 ## Robust losses
 
-As in SciPy, `loss` is `"linear"` (the default), `"huber"`, `"soft_l1"`, `"cauchy"`, `"arctan"`, or any elementwise PyTorch function `rho(z)`, whose derivatives come from autograd. {data}`piazzi.LOSSES` maps the names to their functions. {func}`piazzi.robust_cost` evaluates the cost differentiably, for use with {func}`piazzi.lbfgs_armijo`.
+As in SciPy, `loss` is `"linear"` (the default), `"huber"`, `"soft_l1"`, `"cauchy"`, `"arctan"`, or any elementwise PyTorch function `rho(z)`, whose derivatives come from autograd. {data}`piazzi.LOSSES` maps the names to their functions. {func}`piazzi.robust_cost` evaluates the cost differentiably, for use with {func}`piazzi.lbfgs`.
 
 The gradient is `Jᵀ(ρ′ ⊙ r)`. Two curvature models are available:
 

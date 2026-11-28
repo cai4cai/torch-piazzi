@@ -86,7 +86,7 @@ def minimize(
         has_aux (bool, optional): whether ``fun`` also returns an auxiliary output (any tree
             of tensors), returned detached in ``result.aux`` and ``info.aux``. Default: ``False``
         manifold (Manifold, optional): not supported, since torchmin has no retraction: giving
-            one raises :class:`ValueError`. Use :func:`piazzi.lbfgs_armijo` for manifolds.
+            one raises :class:`ValueError`. Use :func:`piazzi.lbfgs` for manifolds.
             Default: ``None``
         callback (Callable, optional): called after every iteration with an
             :class:`piazzi.IterationInfo` (tensors, with the evaluation counts so far), as for
@@ -133,7 +133,7 @@ def minimize(
         tensor([1.0000, 1.0000], dtype=torch.float64)
     """
     if manifold is not None:
-        raise ValueError("manifold= is not supported by piazzi.torchmin; use method='lbfgs_armijo'")
+        raise ValueError("manifold= is not supported by piazzi.torchmin; use method='lbfgs'")
     if not isinstance(method, str) or method.lower() not in METHODS:
         raise ValueError(f"method must be one of {list(METHODS)}, got {method!r}")
     method = method.lower()

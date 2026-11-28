@@ -1,7 +1,7 @@
 [project]
 name = "piazzi"
 dynamic = ["version"]
-description = "Deterministic PyTorch solvers for nonlinear fitting problems: L-BFGS with Armijo line search, Gauss-Newton, Levenberg-Marquardt."
+description = "Deterministic PyTorch solvers for nonlinear fitting problems: L-BFGS with Armijo, strong Wolfe or Hager-Zhang line search, Gauss-Newton, Levenberg-Marquardt."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

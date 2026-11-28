@@ -16,7 +16,7 @@ setting.
 .. py:data:: MINIMIZE_METHODS
    :type: dict[str, Callable[..., OptimizeResult]]
 
-   Scalar minimisers available to :func:`minimize` by name (currently ``"lbfgs_armijo"``).
+   Scalar minimisers available to :func:`minimize` by name (currently ``"lbfgs"``).
    To add one, register a callable ``method(fun, x0, *, has_aux, callback, **options)``
    under a lower-case name. :func:`minimize` passes ``manifold=`` only when one is given, so a
    method that doesn't support manifolds need not accept it.

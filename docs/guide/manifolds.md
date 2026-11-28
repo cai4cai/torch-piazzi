@@ -1,6 +1,6 @@
 # Manifolds: poses and rotations
 
-Pass `manifold=` to {func}`~piazzi.least_squares`, {func}`~piazzi.gauss_newton`, {func}`~piazzi.lbfgs_armijo` or {func}`~piazzi.minimize` to keep `x` on a constrained set, as Ceres Solver's [`Manifold`](https://ceres-solver.readthedocs.io/latest/nnls_modeling.html#manifold) does. A manifold supplies `plus(x, delta)`, which moves `x` by a tangent vector. The solver takes its Jacobian or gradient with respect to `delta` at zero, by autodiff through `plus`, and applies each step as `x <- plus(x, step)`. A 4 x 4 pose therefore gives 6 Jacobian columns, and every iterate stays a rigid transform.
+Pass `manifold=` to {func}`~piazzi.least_squares`, {func}`~piazzi.gauss_newton`, {func}`~piazzi.lbfgs` or {func}`~piazzi.minimize` to keep `x` on a constrained set, as Ceres Solver's [`Manifold`](https://ceres-solver.readthedocs.io/latest/nnls_modeling.html#manifold) does. A manifold supplies `plus(x, delta)`, which moves `x` by a tangent vector. The solver takes its Jacobian or gradient with respect to `delta` at zero, by autodiff through `plus`, and applies each step as `x <- plus(x, step)`. A 4 x 4 pose therefore gives 6 Jacobian columns, and every iterate stays a rigid transform.
 
 | Manifold | Stored as | Tangent | Notes |
 |---|---|---|---|

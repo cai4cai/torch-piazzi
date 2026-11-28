@@ -1,4 +1,4 @@
-"""Evaluation counts in ``IterationInfo``, and what ``lbfgs_armijo``'s line search evaluates."""
+"""Evaluation counts in ``IterationInfo``, and what ``lbfgs``'s line search evaluates."""
 
 import itertools
 import weakref
@@ -12,7 +12,7 @@ import piazzi
 X0 = torch.tensor([-1.2, 1.0], dtype=F64)
 
 RUNS = {
-    "lbfgs_armijo": (rosen, lambda f, cb: piazzi.minimize(f, X0, callback=cb, options={"max_iter": 200})),
+    "lbfgs": (rosen, lambda f, cb: piazzi.minimize(f, X0, callback=cb, options={"max_iter": 200})),
     "torch_lbfgs": (
         rosen,
         lambda f, cb: piazzi.minimize(
@@ -50,7 +50,7 @@ def test_counts_match_calls_so_far(name):
 
 
 @pytest.mark.parametrize("x0", [X0, X0.repeat(5)], ids=["2d", "10d"])
-def test_lbfgs_armijo_backward_only_at_accepted_points(x0):
+def test_lbfgs_backward_only_at_accepted_points(x0):
     """The line search keeps each trial's graph and runs the backward pass only on acceptance."""
     points, backwards = [], []
 
@@ -67,7 +67,7 @@ def test_lbfgs_armijo_backward_only_at_accepted_points(x0):
     assert not any(torch.equal(a, b) for a, b in itertools.pairwise(points))
 
 
-def test_lbfgs_armijo_value_fun_counts():
+def test_lbfgs_value_fun_counts():
     """With a value_fun, backtracking uses it; an accepted backtracked point costs one more fun call."""
     calls = {"fun": 0, "value": 0}
 
@@ -88,7 +88,7 @@ def test_lbfgs_armijo_value_fun_counts():
     assert calls["fun"] + calls["value"] == res.n_fun_grad + res.n_fun
 
 
-def test_lbfgs_armijo_frees_rejected_graphs():
+def test_lbfgs_frees_rejected_graphs():
     """No earlier trial's graph is still alive when the next evaluation starts."""
     losses, alive_at_call = [], []
 

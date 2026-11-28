@@ -33,7 +33,7 @@ build the normal equations yourself.
 
    gauss_newton
    levenberg_marquardt
-   lbfgs_armijo
+   lbfgs
    least_squares_system
 
 :doc:`Results and callbacks <results>`

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `lbfgs` gains `line_search="hager_zhang"`, the CG_DESCENT line search of Hager and Zhang (ported from LineSearches.jl), with approximate Wolfe conditions that stay meaningful near a minimiser in float32. `hz_epsilon` bounds how far such a step may raise the loss (`0` keeps every step monotone). Each trial needs its gradient, as with strong Wolfe. AGENTS.md now allows this documented tolerance to the "never step uphill" rule.
+- **Breaking:** `lbfgs_armijo` is now `lbfgs` (and `method="lbfgs"` in `minimize`), with a `line_search="armijo" | "strong_wolfe"` argument. The default is unchanged. Strong Wolfe (Nocedal and Wright, Algorithms 3.5 and 3.6, with cubic interpolation, as in `torch.optim.LBFGS`) guarantees positive curvature pairs but evaluates the gradient at every trial point, so a rejected trial counts in `n_fun_grad`, not `n_fun`; `value_fun` is ignored. The line searches live in the private `_line_search` module so that other solvers can share them.
 - Strip local `+...` version identifiers during `workflow_dispatch` builds so untagged branches can be dry-run on TestPyPI.
 - Update the README and documentation for PyPI installation, and add a maintainer release guide.
 
