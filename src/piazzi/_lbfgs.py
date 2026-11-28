@@ -102,8 +102,11 @@ def lbfgs_armijo(
             search. Default: ``10``
         max_step (float, optional): largest change of any coordinate in one step (in the
             units of ``x``, or of the tangent vector). Default: ``1.0``
-        step_tol (float, optional): stop, as converged, once a step's max-norm is below
-            this. Default: ``1e-5``
+        step_tol (float, optional): stop, as converged, once an accepted step from the
+            L-BFGS memory has a max-norm below this. A step shortened by backtracking counts
+            only if the full step was below it too, or if the step made no measurable progress
+            (at a minimiser the line search may accept a step that changes nothing).
+            Default: ``1e-5``
         callback (Callable, optional): called with an :class:`piazzi.IterationInfo` after
             every iteration, accepted or not; returning ``True`` stops the run.
             Default: ``None``
@@ -305,7 +308,6 @@ def lbfgs_armijo(
             if len(S) > history_size:
                 S.pop(0)
                 Y.pop(0)
-        step = s_vec.abs().max().item()
         f_start = f
         x, f, aux, g = x_new, f_new, aux_new, g_new
         stop = callback is not None and callback(
@@ -313,7 +315,12 @@ def lbfgs_armijo(
         )
         # An unscaled steepest-descent step (no curvature pairs yet) says nothing about
         # convergence: with a tiny gradient it is tiny too.
-        if used_memory and step < step_tol:
+        # A backtracked step is short without the minimiser being any closer: it counts only if
+        # the full step was short too, or if it made no measurable progress (at a minimiser, the
+        # Armijo bound can round to the loss itself, so a step that changes nothing passes).
+        step = s_vec.abs().max().item()
+        no_progress = f_start.item() - f.item() <= 8 * torch.finfo(f.dtype).eps * abs(f_start.item())
+        if used_memory and step < step_tol and (step0 < step_tol or no_progress):
             return result(it + 1, True, "step below step_tol")
         if stop:
             return result(it + 1, False, "stopped by callback")

@@ -10,5 +10,6 @@ piazzi is pre-alpha and not yet on PyPI. Development so far:
 - Optional SciPy wrappers (`piazzi.scipy`).
 - Device tests on the CPU, CUDA and MPS, in float32 and float64.
 - Float32 runs that reach a minimiser near a zero residual report convergence (`step below the resolution of x`), judged entry by entry at each point's scale (`Manifold.entry_scale`).
+- `step_tol` is judged on a step that estimates the distance to the minimiser, so heavy Levenberg-Marquardt damping or a long backtracking line search no longer ends a run as converged far from a minimiser.
 - Notebooks: robust regression, Rosenbrock, bundle adjustment.
 - This documentation site.

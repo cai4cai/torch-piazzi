@@ -104,8 +104,12 @@ def gauss_newton(
             Default: ``100``
         max_step (float, optional): largest change of any coordinate in one step (in the
             units of ``x``, or of the tangent vector). Default: ``1.0``
-        step_tol (float, optional): stop, as converged, once a step's max-norm is below
-            this. Default: ``1e-5``
+        step_tol (float, optional): stop, as converged, once an accepted step's max-norm is
+            below this. The step must estimate the distance to the minimiser: the full
+            Gauss-Newton step before any backtracking, and for Levenberg-Marquardt, when the
+            damped step is that short, also the undamped Gauss-Newton step. A step shortened by
+            backtracking or damping alone does not count, and a step that does not change ``x``
+            at all is never accepted. Default: ``1e-5``
         c1 (float, optional): Armijo sufficient-decrease constant (``method="gn"``).
             Default: ``1e-4``
         max_backtracks (int, optional): maximum number of step halvings in one line search
@@ -214,12 +218,19 @@ def gauss_newton(
             return torch.full_like(diag, lam)
         return lam * diag.clamp(min=1e-12 * diag.max().item())
 
-    def gauss_newton_unmoved(Hc, gc, x):
-        """Whether the (lightly ridged) Gauss-Newton step from ``x`` leaves it unmoved."""
+    def predicted_decrease(Hc, gc, d):
+        """Decrease of the loss that the quadratic model predicts for the step ``d``."""
+        return -(torch.dot(gc, d) + 0.5 * torch.dot(d, matvec(Hc, d))).item()
+
+    def gauss_newton_step(Hc, gc):
+        """The (lightly ridged) Gauss-Newton step, or None if it is not a descent direction."""
         d = solve(Hc, gc, gn_ridge * (diagonal(Hc).mean().item() if damping == "identity" else 1.0))
-        if not torch.dot(gc, d).item() < 0:  # not a descent direction: no estimate of the distance
-            return False
-        return unmoved(manifold, x, retract(manifold, x, transfer(d, x.device, x.dtype)))
+        return d if torch.dot(gc, d).item() < 0 else None  # otherwise no estimate of the distance
+
+    def gauss_newton_unmoved(Hc, gc, x):
+        """Whether the Gauss-Newton step from ``x`` leaves it unmoved."""
+        d = gauss_newton_step(Hc, gc)
+        return d is not None and unmoved(manifold, x, retract(manifold, x, transfer(d, x.device, x.dtype)))
 
     def solve(Hc, gc, lam):
         if linear_solver is not None:
@@ -275,6 +286,11 @@ def gauss_newton(
             t = 1.0
             dx = transfer(d, x.device, x.dtype)
             x_new = retract(manifold, x, dx)
+            if torch.equal(x_new, x):  # the step does not change x at all: nothing to evaluate
+                notify(it, f_start, False)
+                if newton:  # the Gauss-Newton step estimates the distance to the minimiser
+                    return result(it + 1, True, "step below the resolution of x")
+                return result(it + 1, False, "line search failed")
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             full_unmoved = newton and math.isfinite(f_new.item()) and unmoved(manifold, x, x_new)
             n_bt = 0
@@ -282,9 +298,11 @@ def gauss_newton(
             while not armijo_ok(f_new.item(), f_val, t, gtd, d) and n_bt < max_backtracks:
                 t *= 0.5
                 x_new = retract(manifold, x, t * dx)
+                if torch.equal(x_new, x):  # backtracked to a step that does not change x: failure
+                    break
                 f_new, g_new = eval_value(x_new), None
                 n_bt += 1
-            if not armijo_ok(f_new.item(), f_val, t, gtd, d):
+            if torch.equal(x_new, x) or not armijo_ok(f_new.item(), f_val, t, gtd, d):
                 notify(it, f_start, False)
                 if full_unmoved:
                     return result(it + 1, True, "step below the resolution of x")
@@ -293,7 +311,9 @@ def gauss_newton(
                 return result(it + 1, False, "line search failed")
             if g_new is None:
                 f_new, aux_new, g_new, H_new = eval_sys(x_new)
-            step = t * d.abs().max().item()
+            # The full step, not the backtracked t * d: backtracking shortens the step without the
+            # minimiser being any closer, so only the full step estimates the distance to it.
+            step = d.abs().max().item()
             x, f, aux = x_new, f_new, aux_new
             gc, Hc = host(g_new), host(H_new)
             stop = notify(it, f_start, True)
@@ -304,7 +324,7 @@ def gauss_newton(
             continue
         # Levenberg-Marquardt.
         d = solve(Hc, gc, lam)
-        pred = -(torch.dot(gc, d) + 0.5 * torch.dot(d, matvec(Hc, d))).item()
+        pred = predicted_decrease(Hc, gc, d)
         if rejections == 0:
             # The prediction of the first trial from this point: rejections raise lam and shrink
             # later predictions, which must not pass for convergence far from a minimiser.
@@ -313,8 +333,13 @@ def gauss_newton(
         if rejections == 0:
             # The first trial is damped, so its size alone does not estimate the distance to the
             # minimiser: when it leaves x unmoved, the Gauss-Newton step is checked as well, once.
-            first_unmoved, gn_checked = unmoved(manifold, x, x_new), None
-        if rejections == 0:  # after an accepted step the trial is usually accepted too
+            first_unmoved, gn_checked, gn_pred = unmoved(manifold, x, x_new), None, None
+        # A trial that does not change x at all (heavy damping) is rejected without evaluating
+        # it: accepting it would count as a step below step_tol anywhere.
+        moved = not torch.equal(x_new, x)
+        if not moved:
+            f_new, have_sys = f, False
+        elif rejections == 0:  # after an accepted step the trial is usually accepted too
             f_new, aux_new, g_new, H_new = eval_sys(x_new)
             have_sys = True
         else:
@@ -326,16 +351,22 @@ def gauss_newton(
         # A non-finite trial value is never accepted: -inf would give rho = +inf.
         fn = f_new.item()
         accept = rho > 0 or (pred <= 0 and fn <= f_val) or at_noise_floor(fn, f_val, d.abs().max().item())
-        if math.isfinite(fn) and accept:
+        if moved and math.isfinite(fn) and accept:
             if not have_sys:
                 f_new, aux_new, g_new, H_new = eval_sys(x_new)
             lam *= max(1.0 / 3.0, 1.0 - (2.0 * rho - 1.0) ** 3)
             nu, rejections = 2.0, 0
             step = d.abs().max().item()
+            if step < step_tol:
+                # The damped step is short, which may only mean that lam is large: the undamped
+                # Gauss-Newton step from the same point (one extra solve, no evaluation) is what
+                # estimates the distance to the minimiser.
+                d_gn = gauss_newton_step(Hc, gc)
+                converged = d_gn is None or d_gn.abs().max().item() < step_tol
             x, f, aux = x_new, f_new, aux_new
             gc, Hc = host(g_new), host(H_new)
             stop = notify(it, f_start, True)
-            if step < step_tol:
+            if step < step_tol and converged:
                 return result(it + 1, True, "step below step_tol")
             if stop:
                 return result(it + 1, False, "stopped by callback")
@@ -350,7 +381,13 @@ def gauss_newton(
                 if gn_checked:
                     return result(it + 1, True, "step below the resolution of x")
             if below_noise(pred_first, fn, f_val):
-                return result(it + 1, True, "predicted decrease below rounding noise")
+                # The damped first trial's prediction may be small only because lam is large:
+                # the undamped Gauss-Newton step's prediction must be below the noise too.
+                if gn_pred is None:
+                    d_gn = gauss_newton_step(Hc, gc)
+                    gn_pred = 0.0 if d_gn is None else predicted_decrease(Hc, gc, d_gn)
+                if below_noise(gn_pred, fn, f_val):
+                    return result(it + 1, True, "predicted decrease below rounding noise")
             if rejections >= max_rejections:
                 return result(it + 1, False, "too many rejected steps in a row")
             if stop:
