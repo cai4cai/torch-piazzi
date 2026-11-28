@@ -17,7 +17,7 @@ def numpy_style(x):
     return torch.from_numpy(y**2 + y[::-1] * 3.0).to(x)
 
 
-@pytest.mark.parametrize("scheme, tol", [("central", 1e-8), ("forward", 1e-5)])
+@pytest.mark.parametrize(("scheme", "tol"), [("central", 1e-8), ("forward", 1e-5)])
 def test_jacobians_match_autodiff(scheme, tol):
     f = lambda x: torch.stack([x[0] ** 2 + x[1], torch.sin(x[1]) * x[0], x.sum() * 100])  # noqa: E731
     x = torch.tensor([1.5, -2.0], dtype=F64)
@@ -40,7 +40,7 @@ def test_values_are_unchanged_and_function_is_a_black_box():
     torch.testing.assert_close(J, 2 * torch.diag(x) + 3 * torch.eye(3, dtype=F64).flip(0), atol=1e-8, rtol=0)
 
 
-@pytest.mark.parametrize("scheme, per_jacobian", [("central", 2), ("forward", 1)])
+@pytest.mark.parametrize(("scheme", "per_jacobian"), [("central", 2), ("forward", 1)])
 def test_evaluation_counts(scheme, per_jacobian):
     """One call for the value, plus ``n`` or ``2n`` per Jacobian, in forward and in reverse mode."""
     n = 4
@@ -204,7 +204,9 @@ def random_pose(seed):
 
 
 @pytest.mark.parametrize("scheme", ["central", "forward"])
-@pytest.mark.parametrize("manifold, point", [(piazzi.SE3(), random_pose(1)), (piazzi.SO3(), random_pose(2)[:3, :3])])
+@pytest.mark.parametrize(
+    ("manifold", "point"), [(piazzi.SE3(), random_pose(1)), (piazzi.SO3(), random_pose(2)[:3, :3])]
+)
 def test_manifold_differences_stay_on_the_manifold(manifold, point, scheme):
     """With manifold=, fun only sees valid rotations, and the tangent-space Jacobian matches autodiff."""
     seen = []
