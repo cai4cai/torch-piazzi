@@ -249,3 +249,46 @@ def test_convergence_is_relative_to_the_scale_of_x():
     scale = 1e-8
     res = pzp.least_squares(lambda x: x[0] * t - 2.0 * scale * t, torch.tensor([0.5 * scale], dtype=torch.float64))
     assert torch.allclose(res.x, torch.tensor([2.0 * scale], dtype=torch.float64), rtol=1e-6)
+
+
+@needs_pypose
+def test_broken_graph_reports_zero_gradient():
+    fun, x0 = exp_fit()
+
+    def detached(x):
+        return fun(x.detach()) + x.detach().sum() * 0
+
+    res = pzp.least_squares(detached, x0, method="gn")
+    assert not res.converged and "exactly zero" in res.message and torch.equal(res.x, x0)
+
+
+@needs_pypose
+def test_solver_failure_message_has_the_cause():
+    def failing(A, b):
+        raise RuntimeError("singular matrix")
+
+    fun, x0 = exp_fit()
+    res = pzp.least_squares(fun, x0, solver=failing)
+    assert "singular matrix" in res.message
+
+
+@needs_pypose
+def test_rejected_step_on_a_lie_tensor_restores_the_point():
+    # PyPose's Gauss-Newton overshoots on this rotation (no line search) and the wrapper must undo the step.
+    target = pp.Exp(pp.se3(torch.tensor([0.5, 0.2, -0.3, 2.0, 0.0, 0.0], dtype=torch.float64)))
+    x0 = pp.identity_SE3(dtype=torch.float64)
+    last = []
+    res = pzp.least_squares(lambda X: (X.Inv() @ target).Log(), x0, method="gn", callback=last.append)
+    assert not last[-1].accepted and not res.converged
+    assert isinstance(res.x, pp.LieTensor) and res.x.ltype == x0.ltype
+    accepted = [i for i in last if i.accepted]
+    assert torch.equal(res.x.tensor(), accepted[-1].x.tensor())
+    assert torch.equal(last[-1].x.tensor(), res.x.tensor())
+
+
+@needs_pypose
+def test_zero_x0_uses_a_reachable_step_tolerance():
+    t = torch.linspace(1, 2, 20)
+    res = pzp.least_squares(lambda x: x[0] * t - 3.0 * t, torch.zeros(1), method="gn")
+    assert res.converged, res.message
+    assert torch.allclose(res.x, torch.tensor([3.0]), atol=1e-4)

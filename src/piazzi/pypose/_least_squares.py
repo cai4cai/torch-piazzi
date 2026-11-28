@@ -60,21 +60,28 @@ class _Residual(nn.Module):
 
 
 class _RecordingSolver(nn.Module):
-    """Wraps a PyPose linear solver: a failure is recorded and answered with a zero step.
+    """Wraps a PyPose linear solver, recording what the wrapper needs to judge a step.
 
-    PyPose's Levenberg-Marquardt catches solver exceptions and prints them; a zero step makes it stop
-    the iteration the same way, and the wrapper reports the failure itself.
+    A failure is recorded (with its cause) and answered with a zero step: PyPose's Levenberg-Marquardt
+    catches solver exceptions and prints them, and a zero step makes it stop the iteration the same way.
+    ``grad_zero`` records that the Jacobian or the gradient ``J^T r`` was exactly zero, which for a nonzero cost
+    usually means ``fun`` is not differentiable with respect to ``x``.
     """
 
     def __init__(self, solver):
         super().__init__()
-        self.solver, self.failed = solver, False
+        self.solver, self.failed, self.grad_zero = solver, "", False
+
+    def reset(self):
+        self.failed, self.grad_zero = "", False
 
     def forward(self, A, b, *args, **kwargs):
+        # Gauss-Newton solves J d = -r (A is J); Levenberg-Marquardt solves (J^T J + damping) d = -J^T r.
+        self.grad_zero = not bool(A.any()) or not bool(b.any())
         try:
             return self.solver(A, b, *args, **kwargs)
-        except Exception:
-            self.failed = True
+        except Exception as e:
+            self.failed = f"{type(e).__name__}: {e}"
             return torch.zeros_like(b)
 
 
@@ -244,7 +251,7 @@ def least_squares(
 
     for it in range(max_iter):
         x_old, cost_old, cost_old_t, aux_old = current(), cost, cost_t, aux
-        pp_solver.failed = False
+        pp_solver.reset()
         loss = opt.step(None)
         solver_failed = pp_solver.failed
         cost_t = (0.5 * torch.as_tensor(loss)).detach().clone()  # PyPose's stubs say float; it is a tensor
@@ -254,7 +261,8 @@ def least_squares(
         noise = 8 * eps * cost_old
         step = tangent_step(x_new, x_old) if math.isfinite(cost) else math.inf
         # Relative to the scale of x (a tangent step on a LieTensor is already scale free).
-        small = step < step_tol * (step_tol + (1.0 if is_lie else float(x_old.abs().max())))
+        scale = 1.0 if is_lie else max(float(x_old.abs().max()), float(x_new.abs().max()))
+        small = step < step_tol * (step_tol + scale)
         if not math.isfinite(cost):
             accepted, stop, converged, message = False, True, False, "the cost became non-finite"
         elif cost < cost_old:
@@ -268,17 +276,19 @@ def least_squares(
                 stop, converged, message = True, True, "the cost is zero"
             elif small and cost_old - cost <= max(noise, step_tol * cost_old):
                 stop, converged, message = True, True, "the step is below step_tol"
-        elif small and cost <= cost_old + noise and not solver_failed:
+        elif small and cost <= cost_old + noise and not solver_failed and not pp_solver.grad_zero:
             # No measurable decrease from a small step: a minimiser to working precision. Keep the previous point.
             accepted, stop, converged, message = False, True, True, "the step is below step_tol, with no decrease"
         else:
             accepted, stop, converged = False, True, False
-            message = (
-                "PyPose's linear solver failed"
-                if solver_failed
-                else "PyPose's step did not decrease the cost"
-                + (f" after {reject} trial steps" if method == "lm" else " (no line search in Gauss-Newton)")
-            )
+            if solver_failed:
+                message = f"PyPose's linear solver failed ({solver_failed})"
+            elif pp_solver.grad_zero:
+                message = "the gradient J^T r is exactly zero at a nonzero cost: is fun differentiable in x?"
+            else:
+                message = "PyPose's step did not decrease the cost" + (
+                    f" after {reject} trial steps" if method == "lm" else " (no line search in Gauss-Newton)"
+                )
         if not accepted:  # undo the step exactly (PyPose's own undo is only up to rounding)
             with torch.no_grad():
                 model.x.copy_(x_old)

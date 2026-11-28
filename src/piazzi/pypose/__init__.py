@@ -22,6 +22,8 @@ try:
     # (https://github.com/pypose/pypose); drop the filters once a release no longer triggers them.
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", r"`torch\.jit\.script` is deprecated", FutureWarning)
+        # A DeprecationWarning before Python 3.12, a SyntaxWarning from then on.
+        warnings.filterwarnings("ignore", r"invalid escape sequence", DeprecationWarning)
         warnings.filterwarnings("ignore", r"invalid escape sequence", SyntaxWarning)
         import pypose  # noqa: F401
 except ImportError as e:
